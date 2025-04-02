@@ -1,17 +1,31 @@
-const { createClient, SchemaFieldTypes } = require('redis');
+const { createClient, SchemaFieldTypes, VectorAlgorithms } = require('redis');
 const axios = require('axios');
+const { pipeline } = require('@huggingface/transformers');
 
-// Clase para la generación de embeddings
-class EmbeddingProvider {
+// Clase base para proveedores de embeddings
+class BaseEmbeddingProvider {
+
+    async getEmbeddings(text) {
+        throw new Error('The getEmbeddings method must be implemented by derived classes');
+    }
+
+    // Convertir array a Float32Buffer para búsquedas vectoriales
+    float32Buffer(arr) {
+        return Buffer.from(new Float32Array(arr).buffer);
+    }
+}
+
+// Clase para la generación de embeddings con OpenAI
+class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
     constructor({
         model = 'text-embedding-ada-002',
         dimensions = 1536,
         apiKey = process.env.OPENAI_API_KEY
     } = {}) {
+        super();
         this.model = model;
         this.dimensions = dimensions;
-        
-        // Configurar cliente Axios para OpenAI
+
         this.openaiClient = axios.create({
             baseURL: 'https://api.openai.com/v1',
             headers: {
@@ -21,7 +35,6 @@ class EmbeddingProvider {
         });
     }
 
-    // Obtener embeddings usando OpenAI
     async getEmbeddings(text) {
         try {
             const response = await this.openaiClient.post('/embeddings', {
@@ -29,42 +42,108 @@ class EmbeddingProvider {
                 input: text,
                 encoding_format: 'float'
             });
+
             return response.data.data[0].embedding;
+
         } catch (error) {
-            console.error('Error al generar embeddings:', error);
+            console.error('Error generating embeddings with OpenAI:', error);
             throw error;
         }
     }
+}
 
-    // Convertir array a Float32Buffer para búsquedas vectoriales
-    float32Buffer(arr) {
-        return Buffer.from(new Float32Array(arr).buffer);
+// Clase para la generación de embeddings con Hugging Face Transformers.js
+class HuggingfaceProvider extends BaseEmbeddingProvider {
+    constructor({
+        model = 'Xenova/multilingual-e5-large',
+        dimensions = 1024,
+        dtype = 'q8',
+        pipelineOptions = {}
+    } = {}) {
+        super();
+        this.model = model;
+        this.dimensions = dimensions;
+        this.dtype = dtype;
+        this.pipelineOptions = pipelineOptions;
+        this.extractor = null;
+        this.isInitialized = false;
+    }
+
+    async initialize() {
+        if (!this.isInitialized) {
+            try {
+                const options = { dtype: this.dtype, ...this.pipelineOptions };
+                this.extractor = await pipeline('feature-extraction', this.model, options);
+                this.dimensions = this.extractor.model.config.hidden_size;
+                console.log(`Hugging Face pipeline initialized with model: ${this.model}`);
+            } catch (error) {
+                console.error(`Error initializing Hugging Face pipeline with model ${this.model}:`, error);
+                throw error;
+            }
+        }
+    }
+
+    // Obtener embeddings usando Hugging Face Transformers.js
+    async getEmbeddings(text) {
+        try {
+            await this.initialize();
+
+            if (!this.extractor) {
+                throw new Error('Hugging Face pipeline not initialized.');
+            }
+
+            const output = await this.extractor(text, { pooling: 'mean', normalize: true });
+            const embeddingsList = output.tolist();
+
+            let embedding = null;
+
+            if (embeddingsList && embeddingsList.length > 0) {
+                if (Array.isArray(embeddingsList[0]) && typeof embeddingsList[0][0] === 'number') {
+                    embedding = embeddingsList[0];
+                } else if (typeof embeddingsList[0] === 'number') {
+                    embedding = embeddingsList;
+                }
+            }
+
+            if (!embedding) {
+                console.error('Unexpected embedding output structure:', embeddingsList);
+                throw new Error('Failed to extract embedding from Hugging Face pipeline output.');
+            }
+
+            return embedding;
+        } catch (error) {
+            console.error('Error generating embeddings with Hugging Face:', error);
+            throw error;
+        }
     }
 }
 
+// Compatibilidad con versiones anteriores
+class EmbeddingProvider extends OpenAIEmbeddingProvider { }
+
 // Clase principal del caché semántico
-class SemanticCache {
+class SeekMix {
     constructor({
         redisUrl = 'redis://localhost:6379',
-        indexName = 'semantic_cache_idx',
-        keyPrefix = 'semantic:',
+        indexName = 'seekmix:idx',
+        keyPrefix = 'seekmix:',
         ttl = 60 * 60 * 24,
         similarityThreshold = 0.8,
         dropIndex = false,
-        embeddingProvider = null,
-        embeddingOptions = {}
+        dropKeys = false,
+        embeddingProvider = null
     } = {}) {
         // Crear provider de embeddings si no se proporciona uno
-        this.embeddingProvider = embeddingProvider || new EmbeddingProvider(embeddingOptions);
-        
-        this.options = { 
-            redisUrl, 
-            vectorDimensions: this.embeddingProvider.dimensions,
-            indexName, 
-            keyPrefix, 
-            ttl, 
-            similarityThreshold, 
-            dropIndex 
+        this.embeddingProvider = embeddingProvider || new HuggingfaceProvider();
+
+        this.options = {
+            redisUrl,
+            indexName,
+            keyPrefix,
+            ttl,
+            similarityThreshold,
+            dropIndex,
+            dropKeys
         };
 
         // Inicializar el cliente Redis
@@ -78,15 +157,45 @@ class SemanticCache {
         try {
             await this.redisClient.connect();
 
+            // Initialize HuggingfaceProvider if applicable
+            if (this.embeddingProvider instanceof HuggingfaceProvider) {
+                await this.embeddingProvider.initialize();
+            }
+
+            this.options.indexName = this.options.indexName + ':' + this.embeddingProvider.model;
+            this.options.keyPrefix = this.options.keyPrefix + this.embeddingProvider.model + ':';
+
             // Eliminar índice existente si existe
             if (this.options.dropIndex) {
                 try {
                     await this.redisClient.ft.dropIndex(this.options.indexName);
-                    console.log(`Índice ${this.options.indexName} eliminado`);
+                    console.log(`Index ${this.options.indexName} deleted`);
                 } catch (error) {
                     if (!error.message.includes('Unknown Index name')) {
                         throw error;
                     }
+                }
+            }
+
+            // Eliminar todas las claves del prefijo si se solicita
+            if (this.options.dropKeys) {
+                try {
+                    let cursor = 0;
+                    do {
+                        const scanResult = await this.redisClient.scan(cursor, {
+                            MATCH: `${this.options.keyPrefix}*`,
+                            COUNT: 1000
+                        });
+                        
+                        cursor = scanResult.cursor;
+                        
+                        if (scanResult.keys.length > 0) {
+                            await this.redisClient.del(scanResult.keys);
+                            console.log(`Deleted ${scanResult.keys.length} keys with prefix ${this.options.keyPrefix}`);
+                        }
+                    } while (cursor !== 0);
+                } catch (error) {
+                    console.error('Error deleting keys:', error);
                 }
             }
 
@@ -99,9 +208,9 @@ class SemanticCache {
                         '$.vector': {
                             type: SchemaFieldTypes.VECTOR,
                             AS: 'vector',
-                            ALGORITHM: 'HNSW',
+                            ALGORITHM: VectorAlgorithms.HNSW,
                             TYPE: 'FLOAT32',
-                            DIM: this.options.vectorDimensions,
+                            DIM: this.embeddingProvider.dimensions,
                             DISTANCE_METRIC: 'COSINE'
                         },
                         '$.text': {
@@ -120,14 +229,14 @@ class SemanticCache {
                         PREFIX: this.options.keyPrefix
                     }
                 );
-                console.log(`Índice ${this.options.indexName} creado correctamente`);
+                console.log(`Index ${this.options.indexName} created successfully`);
             } else {
-                console.log(`Usando índice existente: ${this.options.indexName}`);
+                console.log(`Using existing index: ${this.options.indexName}`);
             }
 
             return true;
         } catch (error) {
-            console.error('Error al conectar con Redis o configurar índice:', error);
+            console.error('Error connecting to Redis or configuring index:', error);
             throw error;
         }
     }
@@ -157,7 +266,7 @@ class SemanticCache {
 
             return true;
         } catch (error) {
-            console.error('Error al guardar en caché:', error);
+            console.error('Error saving to cache:', error);
             throw error;
         }
     }
@@ -166,7 +275,7 @@ class SemanticCache {
     async get(query) {
         try {
             const vector = await this.embeddingProvider.getEmbeddings(query);
-
+            console.log('vector', vector.length);
             // Crear un buffer para el vector
             const queryBuffer = this.embeddingProvider.float32Buffer(vector);
 
@@ -185,19 +294,17 @@ class SemanticCache {
             );
 
             if (results.total > 0 && results.documents[0].value.score <= (1 - this.options.similarityThreshold)) {
-                const cachedResult = {
+                return {
                     query: results.documents[0].value['$.query'],
                     result: results.documents[0].value['$.result'],
                     timestamp: results.documents[0].value['$.timestamp'],
                     score: results.documents[0].value['score'],
                 };
-
-                return cachedResult;
             }
 
             return null;
         } catch (error) {
-            console.error('Error al buscar en caché:', error);
+            console.error('Error searching in cache:', error);
             return null;
         }
     }
@@ -227,7 +334,7 @@ class SemanticCache {
             await Promise.all(deletePromises);
             return deletePromises.length;
         } catch (error) {
-            console.error('Error al invalidar caché antiguo:', error);
+            console.error('Error invalidating old cache:', error);
             throw error;
         }
     }
@@ -238,4 +345,10 @@ class SemanticCache {
     }
 }
 
-module.exports = { SemanticCache, EmbeddingProvider };
+module.exports = {
+    SeekMix,
+    EmbeddingProvider,
+    OpenAIEmbeddingProvider,
+    HuggingfaceProvider,
+    BaseEmbeddingProvider
+};

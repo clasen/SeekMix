@@ -1,14 +1,28 @@
 {
   "name": "seekmix",
+  "description": "A powerful semantic caching library for Node.js.",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "author": "Martin Clasen",
+  "license": "MIT",
+  
+  "keywords": [
+    "semantic-caching",
+    "vector-embeddings",
+    "llm",
+    "rag",
+    "redis",
+    "openai",
+    "huggingface",
+    "cache",
+    "node",
+    "similarity-search"
+  ],
   "dependencies": {
+    "@huggingface/transformers": "^3.4.2",
     "axios": "^1.8.4",
     "redis": "^4.7.0"
   }

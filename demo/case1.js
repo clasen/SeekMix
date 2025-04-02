@@ -1,8 +1,6 @@
-// example.js
-// Ejemplo de uso del caché semántico
 
 require('dotenv').config();
-const { SemanticCache } = require('../index');
+const { SeekMix, HuggingfaceProvider } = require('../index');
 
 // Función que simula una llamada a una API costosa (por ejemplo, una LLM)
 async function expensiveApiCall(query) {
@@ -17,10 +15,10 @@ async function expensiveApiCall(query) {
 // Función principal para demostrar el uso del caché semántico
 async function main() {
     // Crear e inicializar el caché semántico
-    const cache = new SemanticCache({
+    const cache = new SeekMix({
         similarityThreshold: 0.9, // Umbral de similitud semántica
         ttl: 60 * 60, // TTL de 1 hora
-        dropIndex: false
+        // embeddingProvider: new HuggingfaceProvider()
     });
 
     try {
