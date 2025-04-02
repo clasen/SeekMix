@@ -8,6 +8,7 @@ SeekMix is a powerful semantic caching library for Node.js that leverages vector
 
 - **Semantic Caching**: Cache results based on the semantic meaning of queries, not just exact matches
 - **Configurable Similarity Threshold**: Fine-tune how semantically similar queries need to be for a cache hit
+- **Local Embedding Models**: By default, SeekMix uses Hugging Face embedding models locally, reducing external API dependencies
 - **Multiple Embedding Providers**: Support for OpenAI and Hugging Face embedding models
 - **Redis Vector Database**: Leverages Redis as a vector database for efficient similarity search
 - **Time-based Invalidation**: Easily invalidate old cache entries based on time criteria
@@ -31,54 +32,68 @@ npm install seekmix
 
 - Node.js (>= 14.x)
 - Redis 6.2+ with RediSearch module enabled (Redis Stack recommended)
+- Disk space for locally downloaded Hugging Face embedding models
 
 ## Basic Usage
 
 ```javascript
-const { SeekMix, HuggingfaceProvider } = require('seekmix');
+const { SeekMix, OpenAIEmbeddingProvider } = require('seekmix');
 
-async function main() {
-  // Create a semantic cache instance with default settings
-  const cache = new SeekMix({
-    similarityThreshold: 0.9, // Higher means queries need to be more similar for a cache hit
-    ttl: 60 * 60, // TTL of 1 hour
-    // By default, uses Hugging Face embedding model
-  });
-
-  // Connect to Redis and initialize the vector index
-  await cache.connect();
-
-  // Example function that simulates an expensive API call
-  async function expensiveApiCall(query) {
+// Function that simulates an expensive API call (e.g., to an LLM)
+async function expensiveApiCall(query) {
     console.log(`Making expensive API call for: "${query}"`);
-    // In real use, this would be a call to an LLM like GPT-4
-    return `Response for: ${query}`;
-  }
+    // Simulate processing time
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
-  // Process a query using the semantic cache
-  const query = "What are the best restaurants in Madrid?";
-  
-  // Try to get result from cache
-  const cachedResult = await cache.get(query);
-
-  if (cachedResult) {
-    console.log(`Cache hit! Original query: "${cachedResult.query}"`);
-    console.log(`Result: ${cachedResult.result}`);
-    console.log(`Similarity score: ${(1 - cachedResult.score).toFixed(4)}`);
-  } else {
-    console.log('Cache miss - calling API');
-    const result = await expensiveApiCall(query);
-    
-    // Save to cache for future similar queries
-    await cache.set(query, result);
-    console.log(`Result: ${result}`);
-  }
-
-  // Disconnect when done
-  await cache.disconnect();
+    // In a real-world scenario, this would be a call to an API like GPT-X
+    return `Response for: ${query} - ${new Date().toISOString()}`;
 }
 
-main().catch(console.error);
+// Create and initialize the semantic cache
+const cache = new SeekMix({
+    similarityThreshold: 0.9, // Semantic similarity threshold
+    ttl: 60 * 60, // 1 hour TTL
+    // embeddingProvider: new OpenAIEmbeddingProvider()
+});
+
+await cache.connect();
+console.log('Semantic cache connected successfully');
+
+// Examples of semantically similar queries
+const queries = [
+    'What are the best restaurants in New York',
+    'Recommend places to eat in New York',
+    'I need information about restaurants in Chicago',
+    'Looking for good dining spots in New York',
+    'Tell me about hiking trails'
+];
+
+// Process queries, using the cache when possible
+for (const query of queries) {
+    console.log(`\nProcessing query: "${query}"`);
+
+    // Try to get from cache
+    const cachedResult = await cache.get(query);
+
+    if (cachedResult) {
+        console.log(`✅ CACHE HIT - Similarity: ${(1 - cachedResult.score).toFixed(4)}`);
+        console.log(`Original query: "${cachedResult.query}"`);
+        console.log(`Result: ${cachedResult.result}`);
+        console.log(`Stored: ${Math.round((Date.now() - cachedResult.timestamp) / 1000)} seconds ago`);
+    } else {
+        console.log('❌ CACHE MISS - Making API call');
+
+        // Make the expensive call
+        const result = await expensiveApiCall(query);
+
+        // Save to cache for future similar queries
+        await cache.set(query, result);
+        console.log(`Result: ${result}`);
+        console.log('Saved to cache for future similar queries');
+    }
+}
+
+await cache.disconnect();
 ```
 
 ## Advanced Configuration

@@ -1,6 +1,7 @@
 const { createClient, SchemaFieldTypes, VectorAlgorithms } = require('redis');
 const axios = require('axios');
 const { pipeline } = require('@huggingface/transformers');
+const log = require('lemonlog')('SeekMix');
 
 // Clase base para proveedores de embeddings
 class BaseEmbeddingProvider {
@@ -46,7 +47,7 @@ class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
             return response.data.data[0].embedding;
 
         } catch (error) {
-            console.error('Error generating embeddings with OpenAI:', error);
+            log.error('Error generating embeddings with OpenAI:', error);
             throw error;
         }
     }
@@ -73,11 +74,13 @@ class HuggingfaceProvider extends BaseEmbeddingProvider {
         if (!this.isInitialized) {
             try {
                 const options = { dtype: this.dtype, ...this.pipelineOptions };
+                log.info('Initializing Hugging Face pipeline (first initialization may take longer while downloading the model)...');
                 this.extractor = await pipeline('feature-extraction', this.model, options);
                 this.dimensions = this.extractor.model.config.hidden_size;
-                console.log(`Hugging Face pipeline initialized with model: ${this.model}`);
+                log.info(`Hugging Face pipeline initialized with model: ${this.model}`);
+                this.isInitialized = true;
             } catch (error) {
-                console.error(`Error initializing Hugging Face pipeline with model ${this.model}:`, error);
+                log.error(`Error initializing Hugging Face pipeline with model ${this.model}:`, error);
                 throw error;
             }
         }
@@ -106,20 +109,17 @@ class HuggingfaceProvider extends BaseEmbeddingProvider {
             }
 
             if (!embedding) {
-                console.error('Unexpected embedding output structure:', embeddingsList);
+                log.error('Unexpected embedding output structure:', embeddingsList);
                 throw new Error('Failed to extract embedding from Hugging Face pipeline output.');
             }
 
             return embedding;
         } catch (error) {
-            console.error('Error generating embeddings with Hugging Face:', error);
+            log.error('Error generating embeddings with Hugging Face:', error);
             throw error;
         }
     }
 }
-
-// Compatibilidad con versiones anteriores
-class EmbeddingProvider extends OpenAIEmbeddingProvider { }
 
 // Clase principal del caché semántico
 class SeekMix {
@@ -169,7 +169,7 @@ class SeekMix {
             if (this.options.dropIndex) {
                 try {
                     await this.redisClient.ft.dropIndex(this.options.indexName);
-                    console.log(`Index ${this.options.indexName} deleted`);
+                    log.info(`Index ${this.options.indexName} deleted`);
                 } catch (error) {
                     if (!error.message.includes('Unknown Index name')) {
                         throw error;
@@ -191,11 +191,11 @@ class SeekMix {
                         
                         if (scanResult.keys.length > 0) {
                             await this.redisClient.del(scanResult.keys);
-                            console.log(`Deleted ${scanResult.keys.length} keys with prefix ${this.options.keyPrefix}`);
+                            log.info(`Deleted ${scanResult.keys.length} keys with prefix ${this.options.keyPrefix}`);
                         }
                     } while (cursor !== 0);
                 } catch (error) {
-                    console.error('Error deleting keys:', error);
+                    log.error('Error deleting keys:', error);
                 }
             }
 
@@ -229,14 +229,14 @@ class SeekMix {
                         PREFIX: this.options.keyPrefix
                     }
                 );
-                console.log(`Index ${this.options.indexName} created successfully`);
+                log.info(`Index ${this.options.indexName} created successfully`);
             } else {
-                console.log(`Using existing index: ${this.options.indexName}`);
+                log.info(`Using existing index: ${this.options.indexName}`);
             }
 
             return true;
         } catch (error) {
-            console.error('Error connecting to Redis or configuring index:', error);
+            log.error('Error connecting to Redis or configuring index:', error);
             throw error;
         }
     }
@@ -266,7 +266,7 @@ class SeekMix {
 
             return true;
         } catch (error) {
-            console.error('Error saving to cache:', error);
+            log.error('Error saving to cache:', error);
             throw error;
         }
     }
@@ -304,7 +304,7 @@ class SeekMix {
 
             return null;
         } catch (error) {
-            console.error('Error searching in cache:', error);
+            log.error('Error searching in cache:', error);
             return null;
         }
     }
@@ -334,7 +334,7 @@ class SeekMix {
             await Promise.all(deletePromises);
             return deletePromises.length;
         } catch (error) {
-            console.error('Error invalidating old cache:', error);
+            log.error('Error invalidating old cache:', error);
             throw error;
         }
     }

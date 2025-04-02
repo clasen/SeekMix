@@ -1,14 +1,13 @@
 {
   "name": "seekmix",
-  "description": "A powerful semantic caching library for Node.js.",
-  "version": "1.0.0",
+  "description": "🔍 A local semantic caching library for Node.js.",
+  "version": "1.0.2",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Martin Clasen",
   "license": "MIT",
-  
   "keywords": [
     "semantic-caching",
     "vector-embeddings",
@@ -24,6 +23,15 @@
   "dependencies": {
     "@huggingface/transformers": "^3.4.2",
     "axios": "^1.8.4",
+    "lemonlog": "^1.1.4",
     "redis": "^4.7.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clasen/SeekMix.git"
+  },
+  "bugs": {
+    "url": "https://github.com/clasen/SeekMix/issues"
+  },
+  "homepage": "https://github.com/clasen/SeekMix#readme"
 }
