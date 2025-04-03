@@ -50,6 +50,7 @@ class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
     }
 }
 
+// Clase para la generación de embeddings con Hugging Face Transformers.js
 class HuggingfaceProvider extends BaseEmbeddingProvider {
     constructor({
         model = 'Xenova/multilingual-e5-large',
@@ -117,14 +118,13 @@ class HuggingfaceProvider extends BaseEmbeddingProvider {
     }
 }
 
-// Clase principal del caché semántico
 class SeekMix {
     constructor({
         redisUrl = 'redis://localhost:6379',
         indexName = 'seekmix:idx',
         keyPrefix = 'seekmix:',
         ttl = 60 * 60 * 24,
-        similarityThreshold = 0.85,
+        similarityThreshold = 0.87,
         dropIndex = false,
         dropKeys = false,
         embeddingProvider = null
@@ -175,24 +175,7 @@ class SeekMix {
 
             // Eliminar todas las claves del prefijo si se solicita
             if (this.options.dropKeys) {
-                try {
-                    let cursor = 0;
-                    do {
-                        const scanResult = await this.redisClient.scan(cursor, {
-                            MATCH: `${this.options.keyPrefix}*`,
-                            COUNT: 1000
-                        });
-                        
-                        cursor = scanResult.cursor;
-                        
-                        if (scanResult.keys.length > 0) {
-                            await this.redisClient.del(scanResult.keys);
-                            log.info(`Deleted ${scanResult.keys.length} keys with prefix ${this.options.keyPrefix}`);
-                        }
-                    } while (cursor !== 0);
-                } catch (error) {
-                    log.error('Error deleting keys:', error);
-                }
+                this.dropKeys();
             }
 
             const indices = await this.redisClient.ft._LIST();
@@ -237,12 +220,31 @@ class SeekMix {
         }
     }
 
-    // Desconectar el cliente Redis
+    async dropKeys() {
+        try {
+            let cursor = 0;
+            do {
+                const scanResult = await this.redisClient.scan(cursor, {
+                    MATCH: `${this.options.keyPrefix}*`,
+                    COUNT: 1000
+                });
+                
+                cursor = scanResult.cursor;
+                
+                if (scanResult.keys.length > 0) {
+                    await this.redisClient.del(scanResult.keys);
+                    log.info(`Deleted ${scanResult.keys.length} keys with prefix ${this.options.keyPrefix}`);
+                }
+            } while (cursor !== 0);
+        } catch (error) {
+            log.error('Error deleting keys:', error);
+        }
+    }
+
     async disconnect() {
         return this.redisClient.disconnect();
     }
 
-    // Guardar una entrada en el caché con su vector de embeddings
     async set(query, result) {
         try {
             const vector = await this.embeddingProvider.getEmbeddings(query);
@@ -267,7 +269,6 @@ class SeekMix {
         }
     }
 
-    // Buscar una entrada semánticamente similar en el caché
     async get(query) {
         try {
             const vector = await this.embeddingProvider.getEmbeddings(query);
@@ -304,7 +305,6 @@ class SeekMix {
         }
     }
 
-    // Invalidar entradas antiguas del caché
     async invalidateOld(maxAgeInSeconds) {
         try {
             const cutoffTime = Date.now() - (maxAgeInSeconds * 1000);
@@ -334,7 +334,6 @@ class SeekMix {
         }
     }
 
-    // Generar una clave única basada en el texto
     _generateKey(text) {
         return Buffer.from(text).toString('base64').substring(0, 32);
     }

@@ -12,9 +12,7 @@ async function expensiveApiCall(query) {
 
 // Create and initialize the semantic cache
 const cache = new SeekMix({
-    similarityThreshold: 0.85, // Semantic similarity threshold
     ttl: 60 * 60, // 1 hour TTL
-    // embeddingProvider: new OpenAIEmbeddingProvider()
 });
 
 await cache.connect();
