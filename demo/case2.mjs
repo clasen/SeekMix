@@ -11,9 +11,7 @@ async function expensiveApiCall(query) {
 }
 
 // Create and initialize the semantic cache
-const cache = new SeekMix({
-    ttl: 60 * 60, // 1 hour TTL
-});
+const cache = new SeekMix();
 
 await cache.connect();
 console.log('Semantic cache connected successfully');

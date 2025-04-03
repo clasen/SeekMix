@@ -56,20 +56,18 @@ class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
 class OpenAIEmbedding3Provider extends OpenAIEmbeddingProvider {
     constructor({
         model = 'text-embedding-3-small',
-        dimensions = 1536,
-        apiKey = process.env.OPENAI_API_KEY
+        dimensions = 1536
     } = {}) {
-        super({ model, dimensions, apiKey });
+        super({ model, dimensions });
     }
 }
 
 class OpenAIEmbedding3LargeProvider extends OpenAIEmbeddingProvider {
     constructor({
         model = 'text-embedding-3-large',
-        dimensions = 3072,
-        apiKey = process.env.OPENAI_API_KEY
+        dimensions = 3072
     } = {}) {
-        super({ model, dimensions, apiKey });
+        super({ model, dimensions });
     }
 }
 
@@ -144,7 +142,7 @@ class SeekMix {
         redisUrl = 'redis://localhost:6379',
         indexName = 'seekmix:idx',
         keyPrefix = 'seekmix:',
-        ttl = 60 * 60 * 24,
+        ttl = -1,
         similarityThreshold = 0.87,
         dropIndex = false,
         dropKeys = false,
