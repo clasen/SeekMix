@@ -1,30 +1,40 @@
 {
   "name": "seekmix",
   "description": "🔍 A local semantic caching library for Node.js.",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "mocha test/**/*.test.js"
   },
   "author": "Martin Clasen",
   "license": "MIT",
   "keywords": [
+    "search",
+    "semantic",
+    "caching",
+    "cache",
     "semantic-caching",
+    "semantic-search",
+    "similarity-search",
     "vector-embeddings",
     "llm",
     "rag",
     "redis",
+    "local",
+    "standalone",
     "openai",
     "huggingface",
-    "cache",
-    "node",
-    "similarity-search"
+    "embeddings",
+    "clasen"
   ],
   "dependencies": {
     "@huggingface/transformers": "^3.4.2",
     "axios": "^1.8.4",
     "lemonlog": "^1.1.4",
     "redis": "^4.7.0"
+  },
+  "devDependencies": {
+    "mocha": "^10.8.2"
   },
   "repository": {
     "type": "git",

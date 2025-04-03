@@ -1,5 +1,5 @@
 
-const { SeekMix } = require('../index');
+import { SeekMix } from '../index.js';
 
 async function expensiveApiCall(query) {
     console.log(`Making expensive API call for: "${query}"`);
@@ -12,7 +12,7 @@ async function expensiveApiCall(query) {
 
 // Create and initialize the semantic cache
 const cache = new SeekMix({
-    similarityThreshold: 0.9, // Semantic similarity threshold
+    similarityThreshold: 0.85, // Semantic similarity threshold
     ttl: 60 * 60, // 1 hour TTL
     // embeddingProvider: new OpenAIEmbeddingProvider()
 });

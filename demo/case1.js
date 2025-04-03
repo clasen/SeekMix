@@ -1,32 +1,32 @@
-
 require('dotenv').config();
-const { SeekMix, HuggingfaceProvider } = require('../index');
+const { SeekMix, OpenAIEmbeddingProvider } = require('../index');
 
-// Función que simula una llamada a una API costosa (por ejemplo, una LLM)
+// Function that simulates an expensive API call (for example, to an LLM)
 async function expensiveApiCall(query) {
-    console.log(`Realizando llamada costosa a API para: "${query}"`);
-    // Simular tiempo de procesamiento
+    console.log(`Making expensive API call for: "${query}"`);
+    // Simulate processing time
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // En un caso real, aquí se haría una llamada a una API como GPT-4
-    return `Respuesta para: ${query} - ${new Date().toISOString()}`;
+    // In a real case, here we would make a call to an API like GPT-4
+    return `Response for: ${query} - ${new Date().toISOString()}`;
 }
 
-// Función principal para demostrar el uso del caché semántico
+// Main function to demonstrate the use of semantic cache
 async function main() {
-    // Crear e inicializar el caché semántico
+    // Create and initialize the semantic cache
     const cache = new SeekMix({
-        similarityThreshold: 0.9, // Umbral de similitud semántica
-        ttl: 60 * 60, // TTL de 1 hora
-        // embeddingProvider: new HuggingfaceProvider()
+        ttl: 60 * 60, // 1 hour TTL
+        embeddingProvider: new OpenAIEmbeddingProvider(),
+        dropIndex: true,
+        dropKeys: true
     });
 
     try {
-        // Conectar al caché
+        // Connect to the cache
         await cache.connect();
-        console.log('Caché semántico conectado correctamente');
+        console.log('Semantic cache connected successfully');
 
-        // Ejemplos de consultas semánticamente similares
+        // Examples of semantically similar queries
         const queries = [
             'Cuáles son los mejores restaurantes de Madrid',
             'Recomiéndame dónde comer en Madrid',
@@ -35,44 +35,44 @@ async function main() {
             'Mamá está loca'
         ];
 
-        // Procesar las consultas, usando el caché cuando sea posible
+        // Process the queries, using the cache when possible
         for (const query of queries) {
-            console.log(`\nProcesando consulta: "${query}"`);
+            console.log(`\nProcessing query: "${query}"`);
 
-            // Intentar obtener del caché
+            // Try to get from cache
             const cachedResult = await cache.get(query);
 
             if (cachedResult) {
-                console.log(`✅ CACHÉ HIT - Similitud: ${(1 - cachedResult.score).toFixed(4)}`);
-                console.log(`Consulta original: "${cachedResult.query}"`);
-                console.log(`Resultado: ${cachedResult.result}`);
-                console.log(`Almacenado hace: ${Math.round((Date.now() - cachedResult.timestamp) / 1000)} segundos`);
+                console.log(`✅ CACHE HIT - Similarity: ${(1 - cachedResult.score).toFixed(4)}`);
+                console.log(`Original query: "${cachedResult.query}"`);
+                console.log(`Result: ${cachedResult.result}`);
+                console.log(`Stored: ${Math.round((Date.now() - cachedResult.timestamp) / 1000)} seconds ago`);
             } else {
-                console.log('❌ CACHÉ MISS - Realizando llamada a API');
+                console.log('❌ CACHE MISS - Making API call');
 
-                // Realizar la llamada costosa
+                // Make the expensive call
                 const result = await expensiveApiCall(query);
 
-                // Guardar en caché para futuras consultas similares
+                // Save in cache for future similar queries
                 await cache.set(query, result);
-                console.log(`Resultado: ${result}`);
-                console.log('Guardado en caché para futuras consultas similares');
+                console.log(`Result: ${result}`);
+                console.log('Saved in cache for future similar queries');
             }
         }
 
-        // Demo de invalidación
-        // console.log('\n--- Demostración de invalidación ---');
-        // const invalidated = await cache.invalidateOld(30); // Invalidar entradas con más de 30 segundos
-        // console.log(`Entradas invalidadas: ${invalidated}`);
+        // Invalidation demo
+        // console.log('\n--- Invalidation demonstration ---');
+        // const invalidated = await cache.invalidateOld(30); // Invalidate entries older than 30 seconds
+        // console.log(`Invalidated entries: ${invalidated}`);
 
     } catch (error) {
-        console.error('Error en la demostración:', error);
+        console.error('Error in demonstration:', error);
     } finally {
-        // Cerrar la conexión al caché
+        // Close connection to cache
         await cache.disconnect();
-        console.log('\nConexión cerrada');
+        console.log('\nConnection closed');
     }
 }
 
-// Ejecutar la demostración
+// Run the demonstration
 main().catch(console.error);

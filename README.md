@@ -2,8 +2,6 @@
 
 SeekMix is a powerful semantic caching library for Node.js that leverages vector embeddings to cache and retrieve semantically similar queries, significantly reducing API calls to expensive LLM services.
 
-[![npm version](https://badge.fury.io/js/seekmix.svg)](https://badge.fury.io/js/seekmix)
-
 ## Features
 
 - **Semantic Caching**: Cache results based on the semantic meaning of queries, not just exact matches
@@ -22,17 +20,20 @@ SeekMix is a powerful semantic caching library for Node.js that leverages vector
 - **Flexible Configuration**: Adapt to your specific use case with multiple configuration options
 - **Multi-model Support**: Use with OpenAI or open-source Hugging Face models
 
-## Installation
-
-```bash
-npm install seekmix
-```
-
 ## Requirements
 
 - Node.js (>= 14.x)
-- Redis 6.2+ with RediSearch module enabled (Redis Stack recommended)
+- Redis with RedisSearch and RedisJSON modules enabled (Redis Stack recommended)
 - Disk space for locally downloaded Hugging Face embedding models
+
+## Installation with Redis Stack (Docker)
+
+```bash
+docker run -d --name redis-stack-server -p 6379:6379 redis/
+redis-stack-server:latest
+
+npm install seekmix
+```
 
 ## Basic Usage
 

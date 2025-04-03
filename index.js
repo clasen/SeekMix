@@ -3,20 +3,17 @@ const axios = require('axios');
 const { pipeline } = require('@huggingface/transformers');
 const log = require('lemonlog')('SeekMix');
 
-// Clase base para proveedores de embeddings
 class BaseEmbeddingProvider {
 
     async getEmbeddings(text) {
         throw new Error('The getEmbeddings method must be implemented by derived classes');
     }
 
-    // Convertir array a Float32Buffer para búsquedas vectoriales
     float32Buffer(arr) {
         return Buffer.from(new Float32Array(arr).buffer);
     }
 }
 
-// Clase para la generación de embeddings con OpenAI
 class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
     constructor({
         model = 'text-embedding-ada-002',
@@ -53,7 +50,6 @@ class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
     }
 }
 
-// Clase para la generación de embeddings con Hugging Face Transformers.js
 class HuggingfaceProvider extends BaseEmbeddingProvider {
     constructor({
         model = 'Xenova/multilingual-e5-large',
@@ -128,7 +124,7 @@ class SeekMix {
         indexName = 'seekmix:idx',
         keyPrefix = 'seekmix:',
         ttl = 60 * 60 * 24,
-        similarityThreshold = 0.8,
+        similarityThreshold = 0.85,
         dropIndex = false,
         dropKeys = false,
         embeddingProvider = null
@@ -275,7 +271,6 @@ class SeekMix {
     async get(query) {
         try {
             const vector = await this.embeddingProvider.getEmbeddings(query);
-            console.log('vector', vector.length);
             // Crear un buffer para el vector
             const queryBuffer = this.embeddingProvider.float32Buffer(vector);
 
@@ -347,7 +342,6 @@ class SeekMix {
 
 module.exports = {
     SeekMix,
-    EmbeddingProvider,
     OpenAIEmbeddingProvider,
     HuggingfaceProvider,
     BaseEmbeddingProvider
