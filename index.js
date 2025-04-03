@@ -5,6 +5,11 @@ const log = require('lemonlog')('SeekMix');
 
 class BaseEmbeddingProvider {
 
+    constructor({model, dimensions} = {}) {
+        this.model = model;
+        this.dimensions = dimensions;
+    }
+
     async getEmbeddings(text) {
         throw new Error('The getEmbeddings method must be implemented by derived classes');
     }
@@ -20,9 +25,7 @@ class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
         dimensions = 1536,
         apiKey = process.env.OPENAI_API_KEY
     } = {}) {
-        super();
-        this.model = model;
-        this.dimensions = dimensions;
+        super({ model, dimensions });
 
         this.openaiClient = axios.create({
             baseURL: 'https://api.openai.com/v1',
@@ -50,6 +53,26 @@ class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
     }
 }
 
+class OpenAIEmbedding3Provider extends OpenAIEmbeddingProvider {
+    constructor({
+        model = 'text-embedding-3-small',
+        dimensions = 1536,
+        apiKey = process.env.OPENAI_API_KEY
+    } = {}) {
+        super({ model, dimensions, apiKey });
+    }
+}
+
+class OpenAIEmbedding3LargeProvider extends OpenAIEmbeddingProvider {
+    constructor({
+        model = 'text-embedding-3-large',
+        dimensions = 3072,
+        apiKey = process.env.OPENAI_API_KEY
+    } = {}) {
+        super({ model, dimensions, apiKey });
+    }
+}
+
 // Clase para la generación de embeddings con Hugging Face Transformers.js
 class HuggingfaceProvider extends BaseEmbeddingProvider {
     constructor({
@@ -58,9 +81,7 @@ class HuggingfaceProvider extends BaseEmbeddingProvider {
         dtype = 'q8',
         pipelineOptions = {}
     } = {}) {
-        super();
-        this.model = model;
-        this.dimensions = dimensions;
+        super({ model, dimensions });
         this.dtype = dtype;
         this.pipelineOptions = pipelineOptions;
         this.extractor = null;
@@ -228,9 +249,9 @@ class SeekMix {
                     MATCH: `${this.options.keyPrefix}*`,
                     COUNT: 1000
                 });
-                
+
                 cursor = scanResult.cursor;
-                
+
                 if (scanResult.keys.length > 0) {
                     await this.redisClient.del(scanResult.keys);
                     log.info(`Deleted ${scanResult.keys.length} keys with prefix ${this.options.keyPrefix}`);
@@ -259,8 +280,10 @@ class SeekMix {
                 text: query
             });
 
-            // Establecer TTL
-            await this.redisClient.expire(key, this.options.ttl);
+            // Establecer TTL solo si no es -1 (sin caducidad)
+            if (this.options.ttl !== -1) {
+                await this.redisClient.expire(key, this.options.ttl);
+            }
 
             return true;
         } catch (error) {
@@ -341,7 +364,9 @@ class SeekMix {
 
 module.exports = {
     SeekMix,
-    OpenAIEmbeddingProvider,
     HuggingfaceProvider,
-    BaseEmbeddingProvider
+    BaseEmbeddingProvider,
+    OpenAIEmbeddingProvider,
+    OpenAIEmbedding3Provider,
+    OpenAIEmbedding3LargeProvider
 };

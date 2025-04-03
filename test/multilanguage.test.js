@@ -1,6 +1,6 @@
 const { describe, it, before, after } = require('mocha');
 const { strict: assert } = require('assert');
-const { SeekMix, OpenAIEmbeddingProvider } = require('../index');
+const { SeekMix } = require('../index');
 
 describe('SeekMix Multilanguage Tests', function () {
     // Increase timeout for tests since language processing can take time
@@ -14,8 +14,7 @@ describe('SeekMix Multilanguage Tests', function () {
         cache = new SeekMix({
             ttl: 3600, // 1 hour TTL
             dropIndex: true, // Fresh index for testing
-            dropKeys: true,  // Clear any existing keys
-            embeddingProvider: new OpenAIEmbeddingProvider()
+            dropKeys: true  // Clear any existing keys
         });
 
         // Connect to the cache

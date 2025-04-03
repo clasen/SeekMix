@@ -28,11 +28,11 @@ async function main() {
 
         // Examples of semantically similar queries
         const queries = [
-            'Cuáles son los mejores restaurantes de Madrid',
-            'Recomiéndame dónde comer en Madrid',
-            'Necesito información sobre restaurantes en Barcelona',
-            'Quiero saber lugares para comer en Madrid',
-            'Mamá está loca'
+            'What are the best restaurants in New York',
+            'Recommend places to eat in New York',
+            'I need information about restaurants in Chicago',
+            'Looking for good dining spots in New York',
+            'Tell me about hiking trails'
         ];
 
         // Process the queries, using the cache when possible
