@@ -1,4 +1,4 @@
-require('dotenv').config();
+process.loadEnvFile();
 const { SeekMix, OpenAIEmbeddingProvider } = require('../index');
 
 // Function that simulates an expensive API call (for example, to an LLM)

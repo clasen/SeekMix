@@ -10,6 +10,7 @@ describe('SeekMix Multilanguage Tests', function () {
     let cache;
 
     before(async function () {
+        this.timeout(120000); // Model loading can take longer than the default timeout
         // Create a new SeekMix instance with Huggingface provider
         cache = new SeekMix({
             dbPath: ':memory:',
