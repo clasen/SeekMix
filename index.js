@@ -6,7 +6,7 @@ const log = require('lemonlog')('SeekMix');
 
 class BaseEmbeddingProvider {
 
-    constructor({model, dimensions} = {}) {
+    constructor({ model, dimensions } = {}) {
         this.model = model;
         this.dimensions = dimensions;
     }
@@ -195,7 +195,8 @@ class SeekMix {
                     key TEXT UNIQUE NOT NULL,
                     query TEXT NOT NULL,
                     result TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL
+                    timestamp INTEGER NOT NULL,
+                    tags TEXT NOT NULL DEFAULT '[]'
                 )
             `);
 
@@ -240,12 +241,13 @@ class SeekMix {
         }
     }
 
-    async set(query, result) {
+    async set(query, result, { tags = [] } = {}) {
         try {
             const vector = await this.embeddingProvider.getEmbeddings(query);
             const timestamp = Date.now();
             const key = this._generateKey(query);
             const resultStr = JSON.stringify(result);
+            const tagsStr = JSON.stringify([...tags].sort());
 
             const upsert = this.db.transaction(() => {
                 // Remove existing entry with same key if present
@@ -260,9 +262,9 @@ class SeekMix {
 
                 // Insert metadata
                 const info = this.db.prepare(`
-                    INSERT INTO "${this._cacheTable}" (key, query, result, timestamp)
-                    VALUES (?, ?, ?, ?)
-                `).run(key, query, resultStr, timestamp);
+                    INSERT INTO "${this._cacheTable}" (key, query, result, timestamp, tags)
+                    VALUES (?, ?, ?, ?, ?)
+                `).run(key, query, resultStr, timestamp, tagsStr);
 
                 const rowId = info.lastInsertRowid;
 
@@ -281,48 +283,56 @@ class SeekMix {
         }
     }
 
-    async get(query) {
+    async get(query, { tags = [] } = {}) {
         try {
             const vector = await this.embeddingProvider.getEmbeddings(query);
+            const k = tags.length > 0 ? 50 : 1;
 
-            // KNN search using sqlite-vec
+            // KNN search using sqlite-vec + join with cache table
             const rows = this.db.prepare(`
-                SELECT rowid, distance
-                FROM "${this._vecTable}"
-                WHERE embedding MATCH ?
-                  AND k = 1
-                ORDER BY distance
+                WITH knn AS (
+                    SELECT rowid, distance
+                    FROM "${this._vecTable}"
+                    WHERE embedding MATCH ?
+                      AND k = ${k}
+                    ORDER BY distance
+                )
+                SELECT knn.rowid, knn.distance, c.query, c.result, c.timestamp, c.tags
+                FROM knn
+                LEFT JOIN "${this._cacheTable}" c ON c.id = knn.rowid
+                ORDER BY knn.distance
             `).all(new Float32Array(vector));
 
-            if (rows.length > 0 && rows[0].distance <= (1 - this.options.similarityThreshold)) {
-                const rowId = rows[0].rowid;
-                const distance = rows[0].distance;
+            for (const row of rows) {
+                // Stop if beyond similarity threshold
+                if (row.distance > (1 - this.options.similarityThreshold)) break;
+                if (!row.query) continue; // Skip if no cache entry found
 
-                // Retrieve metadata from cache table
-                const entry = this.db.prepare(`
-                    SELECT query, result, timestamp FROM "${this._cacheTable}"
-                    WHERE id = ?
-                `).get(rowId);
-
-                if (entry) {
-                    // Check TTL expiration
-                    if (this.options.ttl !== -1) {
-                        const ageInSeconds = (Date.now() - entry.timestamp) / 1000;
-                        if (ageInSeconds > this.options.ttl) {
-                            // Expired entry — remove and return miss
-                            this.db.prepare(`DELETE FROM "${this._cacheTable}" WHERE id = ?`).run(rowId);
-                            this.db.prepare(`DELETE FROM "${this._vecTable}" WHERE rowid = ?`).run(rowId);
-                            return null;
-                        }
+                // Check TTL expiration
+                if (this.options.ttl !== -1) {
+                    const ageInSeconds = (Date.now() - row.timestamp) / 1000;
+                    if (ageInSeconds > this.options.ttl) {
+                        // Expired entry — remove and continue searching
+                        this.db.prepare(`DELETE FROM "${this._cacheTable}" WHERE id = ?`).run(row.rowid);
+                        this.db.prepare(`DELETE FROM "${this._vecTable}" WHERE rowid = ?`).run(row.rowid);
+                        continue;
                     }
-
-                    return {
-                        query: entry.query,
-                        result: JSON.parse(entry.result),
-                        timestamp: entry.timestamp,
-                        score: distance,
-                    };
                 }
+
+                const entryTags = row.tags ? JSON.parse(row.tags) : [];
+
+                // Check tags: all requested tags must be present (AND logic)
+                if (tags.length > 0 && !tags.every(tag => entryTags.includes(tag))) {
+                    continue;
+                }
+
+                return {
+                    query: row.query,
+                    result: JSON.parse(row.result),
+                    timestamp: row.timestamp,
+                    score: row.distance,
+                    tags: entryTags,
+                };
             }
 
             return null;

@@ -11,6 +11,7 @@ SeekMix is a powerful semantic caching library for Node.js that leverages vector
 - **SQLite + sqlite-vec**: Persistent vector storage powered by SQLite — no external services required
 - **Time-based Invalidation**: Easily invalidate old cache entries based on time criteria
 - **TTL Support**: Configure time-to-live for all cache entries
+- **Tag-based Filtering**: Classify cache entries with tags and filter on retrieval
 
 ## Benefits
 
@@ -27,64 +28,63 @@ SeekMix is a powerful semantic caching library for Node.js that leverages vector
 npm install seekmix
 ```
 
-## Basic Usage
+> **AI Skill**: You can also add SeekMix as a skill for AI agentic development:
+> ```bash
+> npx skills add https://github.com/clasen/SeekMix --skill seekmix
+> ```
+
+## Quick Start
 
 ```javascript
-const { SeekMix, OpenAIEmbeddingProvider } = require('seekmix');
+import { SeekMix } from 'seekmix';
 
-// Function that simulates an expensive API call (e.g., to an LLM)
-async function expensiveApiCall(query) {
-    console.log(`Making expensive API call for: "${query}"`);
-    // Simulate processing time
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // In a real-world scenario, this would be a call to an API like GPT-X
-    return `Response for: ${query} - ${new Date().toISOString()}`;
-}
-
-// Create and initialize the semantic cache
-const cache = new SeekMix({
-    similarityThreshold: 0.9, // Semantic similarity threshold
-    ttl: 60 * 60, // 1 hour TTL
-    // embeddingProvider: new OpenAIEmbeddingProvider()
-});
-
+const cache = new SeekMix();
 await cache.connect();
-console.log('Semantic cache connected successfully');
 
-// Examples of semantically similar queries
-const queries = [
-    'What are the best restaurants in New York',
-    'Recommend places to eat in New York',
-    'I need information about restaurants in Chicago',
-    'Looking for good dining spots in New York',
-    'Tell me about hiking trails'
-];
+// Store a response
+await cache.set('How to make pasta', 'Boil water, add pasta, cook 8 min...');
 
-// Process queries, using the cache when possible
-for (const query of queries) {
-    console.log(`\nProcessing query: "${query}"`);
+// Retrieve it with a semantically similar query
+const hit = await cache.get('Steps for cooking pasta');
 
-    // Try to get from cache
-    const cachedResult = await cache.get(query);
+console.log(hit.result); // 'Boil water, add pasta, cook 8 min...'
 
-    if (cachedResult) {
-        console.log(`✅ CACHE HIT - Similarity: ${(1 - cachedResult.score).toFixed(4)}`);
-        console.log(`Original query: "${cachedResult.query}"`);
-        console.log(`Result: ${cachedResult.result}`);
-        console.log(`Stored: ${Math.round((Date.now() - cachedResult.timestamp) / 1000)} seconds ago`);
-    } else {
-        console.log('❌ CACHE MISS - Making API call');
+await cache.disconnect();
+```
 
-        // Make the expensive call
-        const result = await expensiveApiCall(query);
+The query `"Steps for cooking pasta"` was never stored — but SeekMix understands it means the same as `"How to make pasta"` and returns the cached result.
 
-        // Save to cache for future similar queries
-        await cache.set(query, result);
-        console.log(`Result: ${result}`);
-        console.log('Saved to cache for future similar queries');
-    }
+## Usage with an LLM
+
+A typical pattern is to check the cache before calling an expensive API:
+
+```javascript
+import { SeekMix } from 'seekmix';
+
+const cache = new SeekMix({
+    similarityThreshold: 0.9,
+    ttl: 60 * 60, // 1 hour
+});
+await cache.connect();
+
+async function ask(question) {
+    // 1. Check cache first
+    const hit = await cache.get(question);
+    if (hit) return hit.result;
+
+    // 2. Cache miss — call the LLM
+    const answer = await callYourLLM(question);
+
+    // 3. Store for future similar questions
+    await cache.set(question, answer);
+    return answer;
 }
+
+// First call hits the LLM
+await ask('What are the best restaurants in New York');
+
+// This call returns the cached result — no LLM call needed
+await ask('Recommend places to eat in New York');
 
 await cache.disconnect();
 ```
@@ -92,7 +92,7 @@ await cache.disconnect();
 ## Advanced Configuration
 
 ```javascript
-const { SeekMix, OpenAIEmbeddingProvider } = require('seekmix');
+import { SeekMix, OpenAIEmbeddingProvider } from 'seekmix';
 
 // Create a semantic cache with OpenAI embeddings and custom settings
 const cache = new SeekMix({
@@ -157,6 +157,40 @@ async function queryRAG(userQuestion) {
   await generationCache.set(userQuestion, answer);
   
   return answer;
+}
+```
+
+## Tag-based Filtering
+
+Classify cache entries with tags to filter results by category, language, domain, or any custom dimension. Multiple tags use AND logic — all specified tags must be present for a match.
+
+```javascript
+// Store entries with tags
+await cache.set('Mejores restaurantes en Madrid', resultEs, { tags: ['lang:es'] });
+await cache.set('Best restaurants in Madrid', resultEn, { tags: ['lang:en'] });
+await cache.set('Latest AI news', resultTech, { tags: ['lang:en', 'code:NVDA'] });
+
+// Retrieve filtering by tag
+const hit = await cache.get('Restaurantes en Madrid', { tags: ['lang:es'] });
+// ✅ Only matches entries tagged with 'lang:es'
+
+// Multiple tags (AND logic: entry must have ALL specified tags)
+const hit2 = await cache.get('AI news', { tags: ['lang:en', 'code:NVDA'] });
+// ✅ Only matches entries tagged with BOTH 'lang:en' AND 'code:NVDA'
+
+// Without tags — same behavior as always
+const hit3 = await cache.get('Restaurants in Madrid');
+```
+
+The result object includes the matched entry's tags:
+
+```javascript
+{
+  query: 'Mejores restaurantes en Madrid',
+  result: resultEs,
+  timestamp: 1234567890,
+  score: 0.032,
+  tags: ['lang:es']
 }
 ```
 
