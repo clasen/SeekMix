@@ -15,6 +15,7 @@ async function expensiveApiCall(query) {
 async function main() {
     // Create and initialize the semantic cache
     const cache = new SeekMix({
+        dbPath: 'demo-cache.db',
         ttl: 60 * 60, // 1 hour TTL
         embeddingProvider: new OpenAIEmbeddingProvider(),
         dropIndex: true,
@@ -22,7 +23,7 @@ async function main() {
     });
 
     try {
-        // Connect to the cache
+        // Initialize the cache (opens SQLite DB and loads sqlite-vec)
         await cache.connect();
         console.log('Semantic cache connected successfully');
 
@@ -68,7 +69,7 @@ async function main() {
     } catch (error) {
         console.error('Error in demonstration:', error);
     } finally {
-        // Close connection to cache
+        // Close the database
         await cache.disconnect();
         console.log('\nConnection closed');
     }

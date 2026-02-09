@@ -1,4 +1,5 @@
-const { createClient, SchemaFieldTypes, VectorAlgorithms } = require('redis');
+const Database = require('better-sqlite3');
+const sqliteVec = require('sqlite-vec');
 const axios = require('axios');
 const { pipeline } = require('@huggingface/transformers');
 const log = require('lemonlog')('SeekMix');
@@ -139,150 +140,140 @@ class HuggingfaceProvider extends BaseEmbeddingProvider {
 
 class SeekMix {
     constructor({
-        redisUrl = 'redis://localhost:6379',
-        indexName = 'seekmix:idx',
-        keyPrefix = 'seekmix:',
+        dbPath = 'seekmix.db',
         ttl = -1,
         similarityThreshold = 0.87,
         dropIndex = false,
         dropKeys = false,
         embeddingProvider = null
     } = {}) {
-        // Crear provider de embeddings si no se proporciona uno
         this.embeddingProvider = embeddingProvider || new HuggingfaceProvider();
 
         this.options = {
-            redisUrl,
-            indexName,
-            keyPrefix,
+            dbPath,
             ttl,
             similarityThreshold,
             dropIndex,
             dropKeys
         };
 
-        // Inicializar el cliente Redis
-        this.redisClient = createClient({
-            url: this.options.redisUrl,
-        });
+        this.db = null;
+        this._cacheTable = null;
+        this._vecTable = null;
     }
 
-    // Conectar al cliente Redis y configurar el índice de vectores
+    _sanitizeModelName() {
+        return this.embeddingProvider.model.replace(/[^a-zA-Z0-9]/g, '_');
+    }
+
     async connect() {
         try {
-            await this.redisClient.connect();
-
             // Initialize HuggingfaceProvider if applicable
             if (this.embeddingProvider instanceof HuggingfaceProvider) {
                 await this.embeddingProvider.initialize();
             }
 
-            this.options.indexName = this.options.indexName + ':' + this.embeddingProvider.model;
-            this.options.keyPrefix = this.options.keyPrefix + this.embeddingProvider.model + ':';
+            const modelSuffix = this._sanitizeModelName();
+            this._cacheTable = `cache_${modelSuffix}`;
+            this._vecTable = `vec_${modelSuffix}`;
 
-            // Eliminar índice existente si existe
+            // Open SQLite database and load sqlite-vec extension
+            this.db = new Database(this.options.dbPath);
+            sqliteVec.load(this.db);
+
+            // Drop tables if requested (full reset)
             if (this.options.dropIndex) {
-                try {
-                    await this.redisClient.ft.dropIndex(this.options.indexName);
-                    log.info(`Index ${this.options.indexName} deleted`);
-                } catch (error) {
-                    if (!error.message.includes('Unknown Index name')) {
-                        throw error;
-                    }
-                }
+                this.db.exec(`DROP TABLE IF EXISTS "${this._vecTable}"`);
+                this.db.exec(`DROP TABLE IF EXISTS "${this._cacheTable}"`);
+                log.info(`Tables dropped for model ${this.embeddingProvider.model}`);
             }
 
-            // Eliminar todas las claves del prefijo si se solicita
-            if (this.options.dropKeys) {
-                this.dropKeys();
+            // Create metadata table
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS "${this._cacheTable}" (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key TEXT UNIQUE NOT NULL,
+                    query TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL
+                )
+            `);
+
+            // Create vector table with cosine distance metric
+            this.db.exec(`
+                CREATE VIRTUAL TABLE IF NOT EXISTS "${this._vecTable}" USING vec0(
+                    embedding float[${this.embeddingProvider.dimensions}] distance_metric=cosine
+                )
+            `);
+
+            // Delete all entries if requested (only when tables weren't just recreated)
+            if (this.options.dropKeys && !this.options.dropIndex) {
+                this._dropKeys();
             }
 
-            const indices = await this.redisClient.ft._LIST();
-            if (!indices.includes(this.options.indexName)) {
-                // Crear un índice vectorial en Redis para búsqueda semántica
-                await this.redisClient.ft.create(
-                    this.options.indexName,
-                    {
-                        '$.vector': {
-                            type: SchemaFieldTypes.VECTOR,
-                            AS: 'vector',
-                            ALGORITHM: VectorAlgorithms.HNSW,
-                            TYPE: 'FLOAT32',
-                            DIM: this.embeddingProvider.dimensions,
-                            DISTANCE_METRIC: 'COSINE'
-                        },
-                        '$.text': {
-                            type: SchemaFieldTypes.TEXT,
-                            AS: 'text',
-                            SORTABLE: true
-                        },
-                        '$.timestamp': {
-                            type: SchemaFieldTypes.NUMERIC,
-                            AS: 'timestamp',
-                            SORTABLE: true
-                        }
-                    },
-                    {
-                        ON: 'JSON',
-                        PREFIX: this.options.keyPrefix
-                    }
-                );
-                log.info(`Index ${this.options.indexName} created successfully`);
-            } else {
-                log.info(`Using existing index: ${this.options.indexName}`);
-            }
-
+            log.info(`SQLite database initialized at ${this.options.dbPath} for model ${this.embeddingProvider.model}`);
             return true;
         } catch (error) {
-            log.error('Error connecting to Redis or configuring index:', error);
+            log.error('Error initializing SQLite database:', error);
             throw error;
         }
     }
 
-    async dropKeys() {
+    _dropKeys() {
         try {
-            let cursor = 0;
-            do {
-                const scanResult = await this.redisClient.scan(cursor, {
-                    MATCH: `${this.options.keyPrefix}*`,
-                    COUNT: 1000
-                });
-
-                cursor = scanResult.cursor;
-
-                if (scanResult.keys.length > 0) {
-                    await this.redisClient.del(scanResult.keys);
-                    log.info(`Deleted ${scanResult.keys.length} keys with prefix ${this.options.keyPrefix}`);
-                }
-            } while (cursor !== 0);
+            this.db.exec(`DELETE FROM "${this._cacheTable}"`);
+            this.db.exec(`DELETE FROM "${this._vecTable}"`);
+            log.info('All cache entries deleted');
         } catch (error) {
-            log.error('Error deleting keys:', error);
+            log.error('Error deleting entries:', error);
         }
     }
 
+    async dropKeys() {
+        this._dropKeys();
+    }
+
     async disconnect() {
-        return this.redisClient.disconnect();
+        if (this.db) {
+            this.db.close();
+            this.db = null;
+        }
     }
 
     async set(query, result) {
         try {
             const vector = await this.embeddingProvider.getEmbeddings(query);
             const timestamp = Date.now();
-            const key = `${this.options.keyPrefix}${this._generateKey(query)}`;
+            const key = this._generateKey(query);
+            const resultStr = JSON.stringify(result);
 
-            await this.redisClient.json.set(key, '$', {
-                query,
-                result,
-                vector,
-                timestamp,
-                text: query
+            const upsert = this.db.transaction(() => {
+                // Remove existing entry with same key if present
+                const existing = this.db.prepare(
+                    `SELECT id FROM "${this._cacheTable}" WHERE key = ?`
+                ).get(key);
+
+                if (existing) {
+                    this.db.prepare(`DELETE FROM "${this._vecTable}" WHERE rowid = ?`).run(existing.id);
+                    this.db.prepare(`DELETE FROM "${this._cacheTable}" WHERE id = ?`).run(existing.id);
+                }
+
+                // Insert metadata
+                const info = this.db.prepare(`
+                    INSERT INTO "${this._cacheTable}" (key, query, result, timestamp)
+                    VALUES (?, ?, ?, ?)
+                `).run(key, query, resultStr, timestamp);
+
+                const rowId = info.lastInsertRowid;
+
+                // Insert vector (rowid must match the cache entry id)
+                this.db.prepare(`
+                    INSERT INTO "${this._vecTable}" (rowid, embedding)
+                    VALUES (?, ?)
+                `).run(BigInt(rowId), new Float32Array(vector));
             });
 
-            // Establecer TTL solo si no es -1 (sin caducidad)
-            if (this.options.ttl !== -1) {
-                await this.redisClient.expire(key, this.options.ttl);
-            }
-
+            upsert();
             return true;
         } catch (error) {
             log.error('Error saving to cache:', error);
@@ -293,30 +284,45 @@ class SeekMix {
     async get(query) {
         try {
             const vector = await this.embeddingProvider.getEmbeddings(query);
-            // Crear un buffer para el vector
-            const queryBuffer = this.embeddingProvider.float32Buffer(vector);
 
-            // Buscar vector similar usando la sintaxis correcta de KNN
-            const results = await this.redisClient.ft.search(
-                this.options.indexName,
-                '*=>[KNN 1 @vector $BLOB AS score]',
-                {
-                    PARAMS: {
-                        BLOB: queryBuffer
-                    },
-                    SORTBY: 'score',
-                    DIALECT: 2,
-                    RETURN: ['$.query', '$.result', '$.timestamp', 'score'],
+            // KNN search using sqlite-vec
+            const rows = this.db.prepare(`
+                SELECT rowid, distance
+                FROM "${this._vecTable}"
+                WHERE embedding MATCH ?
+                  AND k = 1
+                ORDER BY distance
+            `).all(new Float32Array(vector));
+
+            if (rows.length > 0 && rows[0].distance <= (1 - this.options.similarityThreshold)) {
+                const rowId = rows[0].rowid;
+                const distance = rows[0].distance;
+
+                // Retrieve metadata from cache table
+                const entry = this.db.prepare(`
+                    SELECT query, result, timestamp FROM "${this._cacheTable}"
+                    WHERE id = ?
+                `).get(rowId);
+
+                if (entry) {
+                    // Check TTL expiration
+                    if (this.options.ttl !== -1) {
+                        const ageInSeconds = (Date.now() - entry.timestamp) / 1000;
+                        if (ageInSeconds > this.options.ttl) {
+                            // Expired entry — remove and return miss
+                            this.db.prepare(`DELETE FROM "${this._cacheTable}" WHERE id = ?`).run(rowId);
+                            this.db.prepare(`DELETE FROM "${this._vecTable}" WHERE rowid = ?`).run(rowId);
+                            return null;
+                        }
+                    }
+
+                    return {
+                        query: entry.query,
+                        result: JSON.parse(entry.result),
+                        timestamp: entry.timestamp,
+                        score: distance,
+                    };
                 }
-            );
-
-            if (results.total > 0 && results.documents[0].value.score <= (1 - this.options.similarityThreshold)) {
-                return {
-                    query: results.documents[0].value['$.query'],
-                    result: results.documents[0].value['$.result'],
-                    timestamp: results.documents[0].value['$.timestamp'],
-                    score: results.documents[0].value['score'],
-                };
             }
 
             return null;
@@ -330,25 +336,25 @@ class SeekMix {
         try {
             const cutoffTime = Date.now() - (maxAgeInSeconds * 1000);
 
-            // Buscar entradas más antiguas que el tiempo de corte
-            const results = await this.redisClient.ft.search(
-                this.options.indexName,
-                `@timestamp:[0 ${cutoffTime}]`,
-                {
-                    LIMIT: {
-                        from: 0,
-                        size: 1000,
-                    },
-                }
-            );
+            const oldEntries = this.db.prepare(`
+                SELECT id FROM "${this._cacheTable}" WHERE timestamp < ?
+            `).all(cutoffTime);
 
-            // Eliminar entradas antiguas
-            const deletePromises = results.documents.map(doc => {
-                return this.redisClient.del(doc.id);
-            });
+            if (oldEntries.length > 0) {
+                const purge = this.db.transaction((entries) => {
+                    const deleteCache = this.db.prepare(`DELETE FROM "${this._cacheTable}" WHERE id = ?`);
+                    const deleteVec = this.db.prepare(`DELETE FROM "${this._vecTable}" WHERE rowid = ?`);
 
-            await Promise.all(deletePromises);
-            return deletePromises.length;
+                    for (const entry of entries) {
+                        deleteCache.run(entry.id);
+                        deleteVec.run(entry.id);
+                    }
+                });
+
+                purge(oldEntries);
+            }
+
+            return oldEntries.length;
         } catch (error) {
             log.error('Error invalidating old cache:', error);
             throw error;

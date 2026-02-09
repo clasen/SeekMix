@@ -12,20 +12,21 @@ describe('SeekMix Multilanguage Tests', function () {
     before(async function () {
         // Create a new SeekMix instance with Huggingface provider
         cache = new SeekMix({
+            dbPath: ':memory:',
             ttl: 3600, // 1 hour TTL
-            dropIndex: true, // Fresh index for testing
-            dropKeys: true  // Clear any existing keys
+            dropIndex: true, // Fresh tables for testing
+            dropKeys: true  // Clear any existing entries
         });
 
-        // Connect to the cache
+        // Initialize the cache (opens SQLite in-memory DB)
         await cache.connect();
-        console.log('Connected to SeekMix cache for testing');
+        console.log('SeekMix cache initialized for testing');
     });
 
     after(async function () {
-        // Disconnect from the cache when tests are done
+        // Close the database
         await cache.disconnect();
-        console.log('Disconnected from SeekMix cache');
+        console.log('SeekMix cache closed');
     });
 
     // Test multilingual query and retrieval

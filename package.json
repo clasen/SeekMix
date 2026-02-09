@@ -1,7 +1,7 @@
 {
   "name": "seekmix",
   "description": "🔍 A local semantic caching library for Node.js.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "main": "index.js",
   "scripts": {
     "test": "mocha test/**/*.test.js"
@@ -19,7 +19,8 @@
     "vector-embeddings",
     "llm",
     "rag",
-    "redis",
+    "sqlite",
+    "sqlite-vec",
     "local",
     "standalone",
     "openai",
@@ -30,8 +31,9 @@
   "dependencies": {
     "@huggingface/transformers": "^3.4.2",
     "axios": "^1.8.4",
+    "better-sqlite3": "^11.10.0",
     "lemonlog": "^1.1.4",
-    "redis": "^4.7.0"
+    "sqlite-vec": "^0.1.6"
   },
   "devDependencies": {
     "mocha": "^10.8.2"

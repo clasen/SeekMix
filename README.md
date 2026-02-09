@@ -8,7 +8,7 @@ SeekMix is a powerful semantic caching library for Node.js that leverages vector
 - **Configurable Similarity Threshold**: Fine-tune how semantically similar queries need to be for a cache hit
 - **Local Embedding Models**: By default, SeekMix uses Hugging Face embedding models locally, reducing external API dependencies
 - **Multiple Embedding Providers**: Support for OpenAI and Hugging Face embedding models
-- **Redis Vector Database**: Leverages Redis as a vector database for efficient similarity search
+- **SQLite + sqlite-vec**: Persistent vector storage powered by SQLite — no external services required
 - **Time-based Invalidation**: Easily invalidate old cache entries based on time criteria
 - **TTL Support**: Configure time-to-live for all cache entries
 
@@ -17,21 +17,13 @@ SeekMix is a powerful semantic caching library for Node.js that leverages vector
 - **Cost Reduction**: Minimize expensive API calls to Large Language Models
 - **Improved Response Times**: Retrieve cached results for semantically similar queries instantly
 - **Perfect for RAG Applications**: Ideal for Retrieval-Augmented Generation systems
+- **Zero Infrastructure**: Just a local SQLite file
 - **Flexible Configuration**: Adapt to your specific use case with multiple configuration options
 - **Multi-model Support**: Use with OpenAI or open-source Hugging Face models
 
-## Requirements
-
-- Node.js (>= 14.x)
-- Redis with RedisSearch and RedisJSON modules enabled (Redis Stack recommended)
-- Disk space for locally downloaded Hugging Face embedding models
-
-## Installation with Redis Stack (Docker)
+## Installation
 
 ```bash
-docker run -d --name redis-stack-server -p 6379:6379 redis/
-redis-stack-server:latest
-
 npm install seekmix
 ```
 
@@ -104,12 +96,10 @@ const { SeekMix, OpenAIEmbeddingProvider } = require('seekmix');
 
 // Create a semantic cache with OpenAI embeddings and custom settings
 const cache = new SeekMix({
-  redisUrl: 'redis://username:password@your-redis-host:6379',
-  indexName: 'my-app:semantic-cache',
-  keyPrefix: 'my-app:cache:',
+  dbPath: 'my-app-cache.db', // SQLite database file path (default: 'seekmix.db')
   ttl: 60 * 60 * 24 * 7, // 1 week
   similarityThreshold: 0.85,
-  dropIndex: false, // Set to true to recreate the index on connect
+  dropIndex: false, // Set to true to recreate tables on connect
   dropKeys: false, // Set to true to clear all cache entries on connect
   embeddingProvider: new OpenAIEmbeddingProvider({
     model: 'text-embedding-ada-002',
@@ -118,17 +108,28 @@ const cache = new SeekMix({
 });
 ```
 
+### Configuration Options
+
+| Option | Default | Description |
+|---|---|---|
+| `dbPath` | `'seekmix.db'` | Path to the SQLite database file. Use `':memory:'` for in-memory storage |
+| `ttl` | `-1` | Time-to-live in seconds for cache entries. `-1` means no expiration |
+| `similarityThreshold` | `0.87` | Cosine similarity threshold for cache hits (0-1) |
+| `dropIndex` | `false` | Drop and recreate tables on `connect()` |
+| `dropKeys` | `false` | Delete all entries on `connect()` |
+| `embeddingProvider` | `HuggingfaceProvider` | Embedding provider instance |
+
 ## Using with RAG Applications
 
 SeekMix is perfect for Retrieval-Augmented Generation applications, as it can cache both the retrieval and generation steps:
 
 ```javascript
 // Caching the retrieval step
-const retrievalCache = new SeekMix({ keyPrefix: 'rag:retrieval:' });
+const retrievalCache = new SeekMix({ dbPath: 'rag-retrieval.db' });
 await retrievalCache.connect();
 
 // Caching the generation step
-const generationCache = new SeekMix({ keyPrefix: 'rag:generation:' });
+const generationCache = new SeekMix({ dbPath: 'rag-generation.db' });
 await generationCache.connect();
 
 async function queryRAG(userQuestion) {
