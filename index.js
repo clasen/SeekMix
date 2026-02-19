@@ -72,6 +72,84 @@ class OpenAIEmbedding3LargeProvider extends OpenAIEmbeddingProvider {
     }
 }
 
+class OpenRouterEmbeddingProvider extends BaseEmbeddingProvider {
+    constructor({
+        model,
+        dimensions,
+        apiKey = process.env.OPENROUTER_API_KEY
+    } = {}) {
+        super({ model, dimensions });
+
+        this.openrouterClient = axios.create({
+            baseURL: 'https://openrouter.ai/api/v1',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            }
+        });
+    }
+
+    async getEmbeddings(text) {
+        try {
+            const response = await this.openrouterClient.post('/embeddings', {
+                model: this.model,
+                input: text,
+                encoding_format: 'float'
+            });
+
+            return response.data.data[0].embedding;
+        } catch (error) {
+            log.error('Error generating embeddings with OpenRouter:', error);
+            throw error;
+        }
+    }
+}
+
+class QwenEmbeddingProvider extends OpenRouterEmbeddingProvider {
+    constructor({
+        model = 'qwen/qwen3-embedding-8b',
+        dimensions = 4096
+    } = {}) {
+        super({ model, dimensions });
+    }
+}
+
+class BgeM3EmbeddingProvider extends OpenRouterEmbeddingProvider {
+    constructor({
+        model = 'baai/bge-m3',
+        dimensions = 1024
+    } = {}) {
+        super({ model, dimensions });
+    }
+}
+
+class MultilingualE5LargeProvider extends OpenRouterEmbeddingProvider {
+    constructor({
+        model = 'intfloat/multilingual-e5-large',
+        dimensions = 1024
+    } = {}) {
+        super({ model, dimensions });
+    }
+}
+
+class OpenAIEmbedding3SmallRouterProvider extends OpenRouterEmbeddingProvider {
+    constructor({
+        model = 'openai/text-embedding-3-small',
+        dimensions = 1536
+    } = {}) {
+        super({ model, dimensions });
+    }
+}
+
+class OpenAIEmbedding3LargeRouterProvider extends OpenRouterEmbeddingProvider {
+    constructor({
+        model = 'openai/text-embedding-3-large',
+        dimensions = 3072
+    } = {}) {
+        super({ model, dimensions });
+    }
+}
+
 // Clase para la generación de embeddings con Hugging Face Transformers.js
 class HuggingfaceProvider extends BaseEmbeddingProvider {
     constructor({
@@ -382,5 +460,11 @@ module.exports = {
     BaseEmbeddingProvider,
     OpenAIEmbeddingProvider,
     OpenAIEmbedding3Provider,
-    OpenAIEmbedding3LargeProvider
+    OpenAIEmbedding3LargeProvider,
+    OpenRouterEmbeddingProvider,
+    QwenEmbeddingProvider,
+    BgeM3EmbeddingProvider,
+    MultilingualE5LargeProvider,
+    OpenAIEmbedding3SmallRouterProvider,
+    OpenAIEmbedding3LargeRouterProvider
 };

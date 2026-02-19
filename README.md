@@ -119,6 +119,46 @@ const cache = new SeekMix({
 | `dropKeys` | `false` | Delete all entries on `connect()` |
 | `embeddingProvider` | `HuggingfaceProvider` | Embedding provider instance |
 
+## Using Qwen3 Embedding (via OpenRouter)
+
+[Qwen3 Embedding 8B](https://openrouter.ai/qwen/qwen3-embedding-8b) is a state-of-the-art multilingual embedding model with 32k context window, excellent for multilingual queries, code retrieval, and long-text understanding.
+
+```javascript
+import { SeekMix, QwenEmbeddingProvider } from 'seekmix';
+
+const cache = new SeekMix({
+  embeddingProvider: new QwenEmbeddingProvider()
+});
+await cache.connect();
+
+// Works seamlessly across languages
+await cache.set('Best restaurants in New York', 'Try Le Bernardin or Eleven Madison Park.');
+await cache.set('Cómo hacer pasta al dente', 'Hierve agua con sal y cocina 1-2 min menos.');
+
+// Retrieve with a semantically similar query in any language
+const hit = await cache.get('Where should I eat in New York?');
+console.log(hit.result); // 'Try Le Bernardin or Eleven Madison Park.'
+
+await cache.disconnect();
+```
+
+Requires `OPENROUTER_API_KEY` in your environment. See [OpenRouter](https://openrouter.ai) for API key setup.
+
+### Embedding Providers
+
+| Provider | Class | Model | Dimensions | Notes |
+|---|---|---|---|---|
+| Hugging Face (local) | `HuggingfaceProvider` | `Xenova/multilingual-e5-large` | 1024 | Default, no API key needed |
+| OpenAI | `OpenAIEmbeddingProvider` | `text-embedding-ada-002` | 1536 | Requires `OPENAI_API_KEY` |
+| OpenAI v3 small | `OpenAIEmbedding3Provider` | `text-embedding-3-small` | 1536 | Requires `OPENAI_API_KEY` |
+| OpenAI v3 large | `OpenAIEmbedding3LargeProvider` | `text-embedding-3-large` | 3072 | Requires `OPENAI_API_KEY` |
+| OpenRouter (generic) | `OpenRouterEmbeddingProvider` | any OpenRouter model | varies | Requires `OPENROUTER_API_KEY` |
+| Qwen3 Embedding 8B | `QwenEmbeddingProvider` | `qwen/qwen3-embedding-8b` | 4096 | Requires `OPENROUTER_API_KEY` |
+| BAAI bge-m3 | `BgeM3EmbeddingProvider` | `baai/bge-m3` | 1024 | Requires `OPENROUTER_API_KEY` |
+|| Multilingual E5 Large | `MultilingualE5LargeProvider` | `intfloat/multilingual-e5-large` | 1024 | Requires `OPENROUTER_API_KEY` |
+| OpenAI text-embedding-3-small (OpenRouter) | `OpenAIEmbedding3SmallRouterProvider` | `openai/text-embedding-3-small` | 1536 | Requires `OPENROUTER_API_KEY` |
+| OpenAI text-embedding-3-large (OpenRouter) | `OpenAIEmbedding3LargeRouterProvider` | `openai/text-embedding-3-large` | 3072 | Requires `OPENROUTER_API_KEY` |
+
 ## Using with RAG Applications
 
 SeekMix is perfect for Retrieval-Augmented Generation applications, as it can cache both the retrieval and generation steps:
