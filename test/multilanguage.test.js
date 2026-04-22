@@ -1,16 +1,13 @@
-const { describe, it, before, after } = require('mocha');
+const { describe, it, before, after } = require('node:test');
 const { strict: assert } = require('assert');
 const { SeekMix } = require('../index');
 
-describe('SeekMix Multilanguage Tests', function () {
-    // Increase timeout for tests since language processing can take time
-    this.timeout(60000);
+describe('SeekMix Multilanguage Tests', { timeout: 60000 }, function () {
 
     // Initialize the cache with Huggingface provider which supports multilingual embeddings
     let cache;
 
     before(async function () {
-        this.timeout(120000); // Model loading can take longer than the default timeout
         // Create a new SeekMix instance with Huggingface provider
         cache = new SeekMix({
             dbPath: ':memory:',
@@ -22,7 +19,7 @@ describe('SeekMix Multilanguage Tests', function () {
         // Initialize the cache (opens SQLite in-memory DB)
         await cache.connect();
         console.log('SeekMix cache initialized for testing');
-    });
+    }, { timeout: 120000 });
 
     after(async function () {
         // Close the database

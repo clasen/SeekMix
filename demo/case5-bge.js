@@ -1,4 +1,4 @@
-const { SeekMix, BgeM3EmbeddingProvider } = require('../index');
+import { SeekMix, BgeM3EmbeddingProvider } from '../index.js';
 try { process.loadEnvFile(); } catch (e) { }
 
 async function expensiveApiCall(query) {

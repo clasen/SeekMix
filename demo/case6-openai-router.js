@@ -1,5 +1,5 @@
-process.loadEnvFile();
-const { SeekMix, OpenAIEmbedding3LargeRouterProvider } = require('../index');
+import { SeekMix, OpenAIEmbedding3LargeRouterProvider } from '../index.js';
+try { process.loadEnvFile(); } catch (e) { }
 
 async function expensiveApiCall(query) {
     console.log(`  🔄 Making API call for: "${query}"`);

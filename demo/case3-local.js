@@ -1,25 +1,26 @@
-const { SeekMix } = require('../index');
+import { SeekMix } from '../index.js';
 
-async function main() {
-    const cache = new SeekMix({ dropIndex: true });
+const cache = new SeekMix({ dropIndex: true });
 
-    await cache.connect();
-    console.log('Connected with default settings (HuggingFace local model)\n');
+await cache.connect();
 
-    // Index some entries
-    await cache.set('How to make pasta', 'Boil water, add pasta, cook for 8 minutes.');
-    await cache.set('What is the capital of France', 'The capital of France is Paris.');
-    await cache.set('Tips for better sleep', 'Avoid screens before bed and keep a regular schedule.');
-    console.log('3 entries indexed\n');
+console.log('Connected with default settings (HuggingFace local model)\n');
 
-    // Search with similar queries
-    const searches = [
-        'How do I cook pasta',
-        'Capital city of France',
-        'How can I sleep better',
-        'Best programming language' // no match expected
-    ];
+// Index some entries
+await cache.set('How to make pasta', 'Boil water, add pasta, cook for 8 minutes.');
+await cache.set('What is the capital of France', 'The capital of France is Paris.');
+await cache.set('Tips for better sleep', 'Avoid screens before bed and keep a regular schedule.');
+console.log('3 entries indexed\n');
 
+// Search with similar queries
+const searches = [
+    'How do I cook pasta',
+    'Capital city of France',
+    'How can I sleep better',
+    'Best programming language' // no match expected
+];
+
+setInterval(async () => {
     for (const q of searches) {
         const hit = await cache.get(q);
         if (hit) {
@@ -30,8 +31,6 @@ async function main() {
             console.log(`  -> MISS\n`);
         }
     }
+}, 1000);
 
-    await cache.disconnect();
-}
 
-main().catch(console.error);

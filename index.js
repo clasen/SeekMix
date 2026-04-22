@@ -1,8 +1,67 @@
 const Database = require('better-sqlite3');
 const sqliteVec = require('sqlite-vec');
-const axios = require('axios');
 const { pipeline } = require('@huggingface/transformers');
 const log = require('lemonlog')('SeekMix');
+
+async function fetchJson(url, { method = 'GET', headers = {}, body } = {}) {
+    const res = await fetch(url, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    const isJson = contentType.includes('application/json');
+
+    const parseBody = async () => {
+        if (res.status === 204) return null;
+        if (isJson) {
+            try {
+                return await res.json();
+            } catch {
+                return null;
+            }
+        }
+        const text = await res.text();
+        return text.length > 0 ? text : null;
+    };
+
+    const data = await parseBody();
+
+    if (!res.ok) {
+        const detail =
+            (data && typeof data === 'object' && data.error && data.error.message) ||
+            (typeof data === 'string' ? data : data ? JSON.stringify(data) : '');
+        const message = `HTTP ${res.status} ${res.statusText}${detail ? `: ${detail}` : ''}`;
+        const err = new Error(message);
+        err.status = res.status;
+        err.statusText = res.statusText;
+        err.data = data;
+        throw err;
+    }
+
+    return data;
+}
+
+function createJsonClient({ baseURL, headers = {} }) {
+    // Trailing slash + relative path: otherwise new URL('/x', base) drops the base path (e.g. /v1).
+    const base = new URL(baseURL.endsWith('/') ? baseURL : `${baseURL}/`);
+    return {
+        async post(path, body) {
+            const relative = path.startsWith('/') ? path.slice(1) : path;
+            const url = new URL(relative, base);
+            const data = await fetchJson(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...headers,
+                },
+                body,
+            });
+            return { data };
+        },
+    };
+}
 
 class BaseEmbeddingProvider {
 
@@ -28,12 +87,11 @@ class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
     } = {}) {
         super({ model, dimensions });
 
-        this.openaiClient = axios.create({
+        this.openaiClient = createJsonClient({
             baseURL: 'https://api.openai.com/v1',
             headers: {
                 'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            }
+            },
         });
     }
 
@@ -80,12 +138,11 @@ class OpenRouterEmbeddingProvider extends BaseEmbeddingProvider {
     } = {}) {
         super({ model, dimensions });
 
-        this.openrouterClient = axios.create({
+        this.openrouterClient = createJsonClient({
             baseURL: 'https://openrouter.ai/api/v1',
             headers: {
                 'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            }
+            },
         });
     }
 
@@ -97,7 +154,12 @@ class OpenRouterEmbeddingProvider extends BaseEmbeddingProvider {
                 encoding_format: 'float'
             });
 
-            return response.data.data[0].embedding;
+            const body = response.data;
+            if (!body?.data?.[0]?.embedding) {
+                const detail = body?.error?.message || JSON.stringify(body);
+                throw new Error(`Unexpected OpenRouter response for model ${this.model}: ${detail}`);
+            }
+            return body.data[0].embedding;
         } catch (error) {
             log.error('Error generating embeddings with OpenRouter:', error);
             throw error;

@@ -1,4 +1,4 @@
-const { SeekMix, QwenEmbeddingProvider } = require('../index');
+import { SeekMix, QwenEmbeddingProvider } from '../index.js';
 try { process.loadEnvFile(); } catch (e) { }
 
 // Simulate an expensive multilingual LLM call

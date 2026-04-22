@@ -1,4 +1,4 @@
-const { SeekMix, OpenAIEmbeddingProvider } = require('../index');
+import { SeekMix, OpenAIEmbeddingProvider } from '../index.js';
 try { process.loadEnvFile(); } catch (e) { }
 
 // Function that simulates an expensive API call (for example, to an LLM)

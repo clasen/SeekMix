@@ -1,5 +1,5 @@
-process.loadEnvFile();
-const { SeekMix, MultilingualE5LargeProvider } = require('../index');
+import { SeekMix, MultilingualE5LargeProvider } from '../index.js';
+try { process.loadEnvFile(); } catch (e) { }
 
 async function expensiveApiCall(query) {
     console.log(`  🔄 Making API call for: "${query}"`);
