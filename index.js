@@ -425,8 +425,24 @@ class SeekMix {
 
     async get(query, { tags = [] } = {}) {
         try {
+            // Backward compatible tags filter:
+            // - tags: []  -> includeTags
+            // - tags: { in: [], out: [] } -> includeTags/excludeTags
+            const { includeTags, excludeTags } = (() => {
+                if (Array.isArray(tags)) {
+                    return { includeTags: tags, excludeTags: [] };
+                }
+                if (tags && typeof tags === 'object') {
+                    const inTags = Array.isArray(tags.in) ? tags.in : [];
+                    const outTags = Array.isArray(tags.out) ? tags.out : [];
+                    return { includeTags: inTags, excludeTags: outTags };
+                }
+                return { includeTags: [], excludeTags: [] };
+            })();
+
             const vector = await this.embeddingProvider.getEmbeddings(query);
-            const k = tags.length > 0 ? 50 : 1;
+            const hasTagFilters = includeTags.length > 0 || excludeTags.length > 0;
+            const k = hasTagFilters ? 50 : 1;
 
             // KNN search using sqlite-vec + join with cache table
             const rows = this.db.prepare(`
@@ -461,8 +477,13 @@ class SeekMix {
 
                 const entryTags = row.tags ? JSON.parse(row.tags) : [];
 
-                // Check tags: all requested tags must be present (AND logic)
-                if (tags.length > 0 && !tags.every(tag => entryTags.includes(tag))) {
+                // Check tags:
+                // - includeTags: all requested tags must be present (AND logic)
+                // - excludeTags: none of the excluded tags may be present
+                if (includeTags.length > 0 && !includeTags.every(tag => entryTags.includes(tag))) {
+                    continue;
+                }
+                if (excludeTags.length > 0 && excludeTags.some(tag => entryTags.includes(tag))) {
                     continue;
                 }
 

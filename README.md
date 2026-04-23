@@ -202,7 +202,14 @@ async function queryRAG(userQuestion) {
 
 ## Tag-based Filtering
 
-Classify cache entries with tags to filter results by category, language, domain, or any custom dimension. Multiple tags use AND logic — all specified tags must be present for a match.
+Classify cache entries with tags to filter results by category, language, domain, or any custom dimension.
+
+### Include tags (legacy + new format)
+
+- Legacy format: `tags: ['a', 'b']`
+- New format: `tags: { in: ['a', 'b'] }`
+
+Both use **AND logic** — all specified tags must be present for a match.
 
 ```javascript
 // Store entries with tags
@@ -220,6 +227,18 @@ const hit2 = await cache.get('AI news', { tags: ['lang:en', 'code:NVDA'] });
 
 // Without tags — same behavior as always
 const hit3 = await cache.get('Restaurants in Madrid');
+```
+
+### Exclude tags (`out`)
+
+You can also exclude tags at retrieval time:
+
+```javascript
+// Exclude entries that have ANY of these tags
+const hit = await cache.get('AI news', { tags: { out: ['lang:es'] } });
+
+// Combine include + exclude
+const hit2 = await cache.get('AI news', { tags: { in: ['lang:en'], out: ['code:NVDA'] } });
 ```
 
 The result object includes the matched entry's tags:

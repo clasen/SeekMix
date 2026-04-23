@@ -55,7 +55,7 @@ async function main() {
                 const result = await expensiveApiCall(query);
 
                 // Save in cache for future similar queries
-                await cache.set(query, result);
+                await cache.set(query, { result });
                 console.log(`Result: ${result}`);
                 console.log('Saved in cache for future similar queries');
             }
