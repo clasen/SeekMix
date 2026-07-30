@@ -1,7 +1,7 @@
 {
   "name": "seekmix",
   "description": "🔍 A local semantic caching library for Node.js.",
-  "version": "1.3.12",
+  "version": "1.3.13",
   "main": "index.js",
   "scripts": {
     "test": "node --test"
@@ -43,5 +43,6 @@
   "bugs": {
     "url": "https://github.com/clasen/SeekMix/issues"
   },
-  "homepage": "https://github.com/clasen/SeekMix#readme"
+  "homepage": "https://github.com/clasen/SeekMix#readme",
+  "packageManager": "pnpm@11.9.0"
 }
