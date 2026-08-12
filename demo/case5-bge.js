@@ -8,14 +8,14 @@ async function expensiveApiCall(query) {
 }
 
 async function main() {
-    const cache = new SeekMix({
+    const store = new SeekMix({
+        reset: true,
         ttl: 60 * 60,
         similarityThreshold: 0.77,
-        dropIndex: true,
-        embeddingProvider: new BgeM3EmbeddingProvider()
+        embeddingProvider: new BgeM3EmbeddingProvider(),
     });
 
-    await cache.connect();
+    await store.connect();
     console.log('Connected using BAAI bge-m3 (via OpenRouter)\n');
 
     const seeds = [
@@ -25,9 +25,9 @@ async function main() {
         { query: '東京のおすすめ観光地', result: '浅草寺、新宿御苑、東京タワーがおすすめです。' },
     ];
 
-    console.log('--- Seeding cache ---');
+    console.log('--- Seeding store ---');
     for (const { query, result } of seeds) {
-        await cache.set(query, result);
+        await store.set(query, result);
         console.log(`  ✅ Stored: "${query}"`);
     }
 
@@ -42,7 +42,7 @@ async function main() {
     console.log('\n--- Semantic search demo ---');
     for (const query of queries) {
         console.log(`\nQuery: "${query}"`);
-        const hit = await cache.get(query);
+        const hit = await store.get(query);
 
         if (hit) {
             console.log(`  ✅ CACHE HIT  (similarity: ${(1 - hit.score).toFixed(4)})`);
@@ -51,13 +51,13 @@ async function main() {
         } else {
             console.log('  ❌ CACHE MISS');
             const result = await expensiveApiCall(query);
-            await cache.set(query, result);
+            await store.set(query, result);
             console.log(`  Answer:      ${result}`);
             console.log('  Saved to cache for future similar queries.');
         }
     }
 
-    await cache.disconnect();
+    await store.disconnect();
     console.log('\nDone.');
 }
 

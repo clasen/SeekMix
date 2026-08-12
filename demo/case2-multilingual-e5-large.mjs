@@ -9,11 +9,13 @@ async function expensiveApiCall(query) {
     return `Response for: ${query} - ${new Date().toISOString()}`;
 }
 
-// Create and initialize the semantic cache
-const cache = new SeekMix();
+const store = new SeekMix({
+    ttl: 60 * 60,
+    similarityThreshold: 0.87,
+});
 
-await cache.connect();
-console.log('Semantic cache connected successfully');
+await store.connect();
+console.log('Semantic store connected successfully');
 
 // Examples of semantically similar queries
 const queries = [
@@ -28,8 +30,7 @@ const queries = [
 for (const query of queries) {
     console.log(`\nProcessing query: "${query}"`);
 
-    // Try to get from cache
-    const cachedResult = await cache.get(query);
+    const cachedResult = await store.get(query);
 
     if (cachedResult) {
         console.log(`✅ CACHE HIT - Similarity: ${(1 - cachedResult.score).toFixed(4)}`);
@@ -42,11 +43,10 @@ for (const query of queries) {
         // Make the expensive call
         const result = await expensiveApiCall(query);
 
-        // Save to cache for future similar queries
-        await cache.set(query, result);
+        await store.set(query, result);
         console.log(`Result: ${result}`);
         console.log('Saved to cache for future similar queries');
     }
 }
 
-await cache.disconnect();
+await store.disconnect();

@@ -1,15 +1,27 @@
 import { SeekMix } from '../index.js';
 
-const cache = new SeekMix({ dropIndex: true });
+const store = new SeekMix({ reset: true });
 
-await cache.connect();
+await store.connect();
 
 console.log('Connected with default settings (HuggingFace local model)\n');
 
 // Index some entries
-await cache.set('How to make pasta', 'Boil water, add pasta, cook for 8 minutes.');
-await cache.set('What is the capital of France', 'The capital of France is Paris.');
-await cache.set('Tips for better sleep', 'Avoid screens before bed and keep a regular schedule.');
+await store.upsert({
+    id: 'pasta',
+    content: 'How to make pasta',
+    data: 'Boil water, add pasta, cook for 8 minutes.',
+});
+await store.upsert({
+    id: 'france-capital',
+    content: 'What is the capital of France',
+    data: 'The capital of France is Paris.',
+});
+await store.upsert({
+    id: 'sleep',
+    content: 'Tips for better sleep',
+    data: 'Avoid screens before bed and keep a regular schedule.',
+});
 console.log('3 entries indexed\n');
 
 // Search with similar queries
@@ -20,17 +32,18 @@ const searches = [
     'Best programming language' // no match expected
 ];
 
-setInterval(async () => {
-    for (const q of searches) {
-        const hit = await cache.get(q);
-        if (hit) {
-            console.log(`"${q}"`);
-            console.log(`  -> HIT (similarity ${(1 - hit.score).toFixed(4)}): ${hit.result}\n`);
-        } else {
-            console.log(`"${q}"`);
-            console.log(`  -> MISS\n`);
-        }
+for (const query of searches) {
+    const [match] = await store.search(query, {
+        limit: 1,
+        minSimilarity: 0.87,
+    });
+    if (match) {
+        console.log(`"${query}"`);
+        console.log(`  -> MATCH (similarity ${match.similarity.toFixed(4)}): ${match.data}\n`);
+    } else {
+        console.log(`"${query}"`);
+        console.log('  -> NO MATCH\n');
     }
-}, 1000);
+}
 
-
+await store.disconnect();

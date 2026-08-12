@@ -4,31 +4,23 @@ const { SeekMix } = require('../index');
 
 describe('SeekMix Multilanguage Tests', { timeout: 60000 }, function () {
 
-    // Initialize the cache with Huggingface provider which supports multilingual embeddings
-    let cache;
+    let store;
 
     before(async function () {
-        // Create a new SeekMix instance with Huggingface provider
-        cache = new SeekMix({
+        store = new SeekMix({
             dbPath: ':memory:',
-            ttl: 3600, // 1 hour TTL
-            dropIndex: true, // Fresh tables for testing
-            dropKeys: true  // Clear any existing entries
         });
 
-        // Initialize the cache (opens SQLite in-memory DB)
-        await cache.connect();
-        console.log('SeekMix cache initialized for testing');
+        await store.connect();
+        console.log('SeekMix store initialized for testing');
     }, { timeout: 120000 });
 
     after(async function () {
-        // Close the database
-        await cache.disconnect();
-        console.log('SeekMix cache closed');
+        await store.disconnect();
+        console.log('SeekMix store closed');
     });
 
-    // Test multilingual query and retrieval
-    describe('Multilingual semantic caching', function () {
+    describe('Multilingual semantic search', function () {
         // Define 20 language pairs with semantically similar queries
         const languagePairs = [
             {
@@ -153,7 +145,7 @@ describe('SeekMix Multilanguage Tests', { timeout: 60000 }, function () {
             }
         ];
 
-        it('should cache and retrieve semantically similar queries across languages', async function () {
+        it('indexes and retrieves semantically similar queries across languages', async function () {
             // For each language pair in our test set
             for (const pair of languagePairs) {
                 const { language, original, similar, different } = pair;
@@ -164,43 +156,39 @@ describe('SeekMix Multilanguage Tests', { timeout: 60000 }, function () {
                 // Simulate a result for the original query
                 const result = `Results for: ${original} (${language})`;
 
-                // Cache the original query
-                await cache.set(original, result);
-                console.log(`Cached result for original query`);
+                await store.set(original, result);
+                console.log('Indexed result for original query');
 
                 // Test with a semantically similar query
                 console.log(`Similar query: "${similar}"`);
-                const similarResult = await cache.get(similar);
+                const similarResult = await store.get(similar);
 
-                // Assert that we get a cache hit for the similar query
-                assert.notEqual(similarResult, null,
+                assert.ok(similarResult,
                     `Should find a similar entry for "${similar}" in ${language}`);
 
-                console.log(`✅ Cache hit - Similarity: ${(1 - similarResult.score).toFixed(4)}`);
+                console.log(`✅ Semantic match - Similarity: ${(1 - similarResult.score).toFixed(4)}`);
                 console.log(`Retrieved original query: "${similarResult.query}"`);
 
                 // Test with a semantically different query
                 console.log(`Different query: "${different}"`);
-                const differentResult = await cache.get(different);
+                const differentResult = await store.get(different);
 
-                // Assert that we get a cache miss for the different query
                 assert.equal(differentResult, null,
                     `Should NOT find a similar entry for "${different}" in ${language}`);
 
-                console.log(`✅ Cache miss for different query`);
+                console.log('✅ No semantic match for different query');
             }
         });
 
-        it('should cache and retrieve cross-language semantically similar queries', async function () {
+        it('retrieves cross-language semantically similar queries', async function () {
             // Test if queries in different languages but with same meaning can be matched
 
             // We'll use English as source and test against a few other languages
             const englishQuery = 'What are the best restaurants in New York';
             const englishResult = 'Results for best New York restaurants';
 
-            // Store the English query
-            await cache.set(englishQuery, englishResult);
-            console.log(`\nCached original English query: "${englishQuery}"`);
+            await store.set(englishQuery, englishResult);
+            console.log(`\nIndexed original English query: "${englishQuery}"`);
 
             // Test similar queries in different languages
             const crossLanguageQueries = [
@@ -213,21 +201,20 @@ describe('SeekMix Multilanguage Tests', { timeout: 60000 }, function () {
             for (const { language, query } of crossLanguageQueries) {
                 console.log(`Testing ${language} query: "${query}"`);
 
-                // Try to retrieve using the translated query
-                const result = await cache.get(query);
+                const result = await store.get(query);
 
                 console.log(result ?
-                    `✅ Cross-language cache hit - Similarity: ${(1 - result.score).toFixed(4)}` :
-                    `❌ Cross-language cache miss`);
+                    `✅ Cross-language match - Similarity: ${(1 - result.score).toFixed(4)}` :
+                    '❌ Cross-language search miss');
 
                 // We're not asserting here because cross-language performance depends on the embedding model quality
             }
         });
 
-        it('should properly identify cache misses between unrelated queries across languages', async function () {
+        it('does not confuse unrelated queries across languages', async function () {
             // This test verifies that unrelated queries in different languages don't produce false cache hits
 
-            console.log('\nTesting cache misses between unrelated queries in different languages:');
+            console.log('\nTesting unrelated queries in different languages:');
 
             // Create a set of unrelated queries in different languages
             const unrelatedQueries = [
@@ -238,10 +225,9 @@ describe('SeekMix Multilanguage Tests', { timeout: 60000 }, function () {
                 { language: 'Italian', query: 'Come preparare la pasta carbonara', result: 'Ricetta pasta carbonara' }
             ];
 
-            // Cache all the queries
             for (const { language, query, result } of unrelatedQueries) {
-                await cache.set(query, result);
-                console.log(`Cached ${language} query: "${query}"`);
+                await store.set(query, result);
+                console.log(`Indexed ${language} query: "${query}"`);
             }
 
             // Test that each query doesn't retrieve any of the others
@@ -257,16 +243,14 @@ describe('SeekMix Multilanguage Tests', { timeout: 60000 }, function () {
 
                     console.log(`Testing if ${language} query "${query}" matches ${otherLanguage} query "${otherQuery}"`);
 
-                    // Get the exact match first to ensure it's cached
-                    const exactMatch = await cache.get(query);
-                    assert.notEqual(exactMatch, null, `Should find exact match for "${query}"`);
+                    const exactMatch = await store.get(query);
+                    assert.ok(exactMatch, `Should find exact match for "${query}"`);
                     assert.equal(exactMatch.result, result, `Should return correct result for exact match`);
 
-                    // Check if the other query returns a match (it shouldn't)
-                    const crossMatch = await cache.get(otherQuery);
+                    const crossMatch = await store.get(otherQuery);
 
                     // It should find its own result, but not the result of the current query
-                    assert.notEqual(crossMatch, null, `Should find a result for "${otherQuery}"`);
+                    assert.ok(crossMatch, `Should find a result for "${otherQuery}"`);
                     assert.notEqual(crossMatch.result, result, `"${otherQuery}" should not match "${query}"`);
 
                     console.log(`✅ Verified no false match between different queries`);
@@ -274,4 +258,4 @@ describe('SeekMix Multilanguage Tests', { timeout: 60000 }, function () {
             }
         });
     });
-}); 
+});

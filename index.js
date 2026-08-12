@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const sqliteVec = require('sqlite-vec');
 const { pipeline } = require('@huggingface/transformers');
+const { createHash } = require('node:crypto');
 const log = require('lemonlog')('SeekMix');
 
 async function fetchJson(url, { method = 'GET', headers = {}, body } = {}) {
@@ -70,12 +71,8 @@ class BaseEmbeddingProvider {
         this.dimensions = dimensions;
     }
 
-    async getEmbeddings(text) {
-        throw new Error('The getEmbeddings method must be implemented by derived classes');
-    }
-
-    float32Buffer(arr) {
-        return Buffer.from(new Float32Array(arr).buffer);
+    async embed(text) {
+        throw new Error('The embed method must be implemented by derived classes');
     }
 }
 
@@ -95,7 +92,7 @@ class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
         });
     }
 
-    async getEmbeddings(text) {
+    async embed(text) {
         try {
             const response = await this.openaiClient.post('/embeddings', {
                 model: this.model,
@@ -146,7 +143,7 @@ class OpenRouterEmbeddingProvider extends BaseEmbeddingProvider {
         });
     }
 
-    async getEmbeddings(text) {
+    async embed(text) {
         try {
             const response = await this.openrouterClient.post('/embeddings', {
                 model: this.model,
@@ -244,7 +241,7 @@ class HuggingfaceProvider extends BaseEmbeddingProvider {
     }
 
     // Obtener embeddings usando Hugging Face Transformers.js
-    async getEmbeddings(text) {
+    async embed(text) {
         try {
             await this.initialize();
 
@@ -281,97 +278,79 @@ class HuggingfaceProvider extends BaseEmbeddingProvider {
 class SeekMix {
     constructor({
         dbPath = 'seekmix.db',
+        reset = false,
         ttl = -1,
         similarityThreshold = 0.87,
-        dropIndex = false,
-        dropKeys = false,
-        embeddingProvider = null
+        embeddingProvider = new HuggingfaceProvider(),
     } = {}) {
-        this.embeddingProvider = embeddingProvider || new HuggingfaceProvider();
+        if (ttl !== -1 && (!Number.isFinite(ttl) || ttl < 0)) {
+            throw new TypeError('ttl must be -1 or a non-negative number of seconds');
+        }
+        if (!Number.isFinite(similarityThreshold) || similarityThreshold < 0 || similarityThreshold > 1) {
+            throw new TypeError('similarityThreshold must be between 0 and 1');
+        }
 
-        this.options = {
-            dbPath,
-            ttl,
-            similarityThreshold,
-            dropIndex,
-            dropKeys
-        };
-
+        this.embeddingProvider = embeddingProvider;
+        this.options = { dbPath, reset, ttl, similarityThreshold };
         this.db = null;
-        this._cacheTable = null;
-        this._vecTable = null;
-    }
-
-    _sanitizeModelName() {
-        return this.embeddingProvider.model.replace(/[^a-zA-Z0-9]/g, '_');
+        this._entriesTable = null;
+        this._vectorsTable = null;
     }
 
     async connect() {
+        if (this.db) {
+            throw new Error('SeekMix is already connected');
+        }
+
+        if (typeof this.embeddingProvider.initialize === 'function') {
+            await this.embeddingProvider.initialize();
+        }
+        this._assertEmbeddingProvider();
+
+        const namespace = createHash('sha256')
+            .update(`${this.embeddingProvider.model}:${this.embeddingProvider.dimensions}`)
+            .digest('hex')
+            .slice(0, 16);
+        this._entriesTable = `seekmix_entries_${namespace}`;
+        this._vectorsTable = `seekmix_vectors_${namespace}`;
+
+        this.db = new Database(this.options.dbPath);
         try {
-            // Initialize HuggingfaceProvider if applicable
-            if (this.embeddingProvider instanceof HuggingfaceProvider) {
-                await this.embeddingProvider.initialize();
-            }
-
-            const modelSuffix = this._sanitizeModelName();
-            this._cacheTable = `cache_${modelSuffix}`;
-            this._vecTable = `vec_${modelSuffix}`;
-
-            // Open SQLite database and load sqlite-vec extension
-            this.db = new Database(this.options.dbPath);
             sqliteVec.load(this.db);
 
-            // Drop tables if requested (full reset)
-            if (this.options.dropIndex) {
-                this.db.exec(`DROP TABLE IF EXISTS "${this._vecTable}"`);
-                this.db.exec(`DROP TABLE IF EXISTS "${this._cacheTable}"`);
-                log.info(`Tables dropped for model ${this.embeddingProvider.model}`);
+            if (this.options.reset) {
+                this.db.exec(`DROP TABLE IF EXISTS "${this._vectorsTable}"`);
+                this.db.exec(`DROP TABLE IF EXISTS "${this._entriesTable}"`);
             }
 
-            // Create metadata table
             this.db.exec(`
-                CREATE TABLE IF NOT EXISTS "${this._cacheTable}" (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    key TEXT UNIQUE NOT NULL,
-                    query TEXT NOT NULL,
-                    result TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL,
-                    tags TEXT NOT NULL DEFAULT '[]'
+                CREATE TABLE IF NOT EXISTS "${this._entriesTable}" (
+                    row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id TEXT UNIQUE NOT NULL,
+                    content TEXT NOT NULL,
+                    data TEXT NOT NULL,
+                    tags TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    expires_at INTEGER
                 )
             `);
-
-            // Create vector table with cosine distance metric
             this.db.exec(`
-                CREATE VIRTUAL TABLE IF NOT EXISTS "${this._vecTable}" USING vec0(
+                CREATE INDEX IF NOT EXISTS "${this._entriesTable}_expires_at"
+                ON "${this._entriesTable}" (expires_at)
+            `);
+            this.db.exec(`
+                CREATE VIRTUAL TABLE IF NOT EXISTS "${this._vectorsTable}" USING vec0(
                     embedding float[${this.embeddingProvider.dimensions}] distance_metric=cosine
                 )
             `);
-
-            // Delete all entries if requested (only when tables weren't just recreated)
-            if (this.options.dropKeys && !this.options.dropIndex) {
-                this._dropKeys();
-            }
-
-            log.info(`SQLite database initialized at ${this.options.dbPath} for model ${this.embeddingProvider.model}`);
-            return true;
         } catch (error) {
-            log.error('Error initializing SQLite database:', error);
+            this.db.close();
+            this.db = null;
             throw error;
         }
-    }
 
-    _dropKeys() {
-        try {
-            this.db.exec(`DELETE FROM "${this._cacheTable}"`);
-            this.db.exec(`DELETE FROM "${this._vecTable}"`);
-            log.info('All cache entries deleted');
-        } catch (error) {
-            log.error('Error deleting entries:', error);
-        }
-    }
-
-    async dropKeys() {
-        this._dropKeys();
+        return true;
     }
 
     async disconnect() {
@@ -381,159 +360,331 @@ class SeekMix {
         }
     }
 
-    async set(query, result, { tags = [] } = {}) {
-        try {
-            const vector = await this.embeddingProvider.getEmbeddings(query);
-            const timestamp = Date.now();
-            const key = this._generateKey(query);
-            const resultStr = JSON.stringify(result);
-            const tagsStr = JSON.stringify([...tags].sort());
+    async upsert({ id, content, data, tags = [], expiresAt = null }) {
+        this._assertConnected();
+        this._assertEntry({ id, content, data, tags, expiresAt });
 
-            const upsert = this.db.transaction(() => {
-                // Remove existing entry with same key if present
-                const existing = this.db.prepare(
-                    `SELECT id FROM "${this._cacheTable}" WHERE key = ?`
-                ).get(key);
+        const vector = await this._embed(content);
+        const serializedData = JSON.stringify(data);
+        const serializedTags = JSON.stringify([...new Set(tags)].sort());
+        const timestamp = Date.now();
 
-                if (existing) {
-                    this.db.prepare(`DELETE FROM "${this._vecTable}" WHERE rowid = ?`).run(existing.id);
-                    this.db.prepare(`DELETE FROM "${this._cacheTable}" WHERE id = ?`).run(existing.id);
-                }
+        const upsertEntry = this.db.transaction(() => {
+            const existing = this.db.prepare(`
+                SELECT row_id, created_at
+                FROM "${this._entriesTable}"
+                WHERE id = ?
+            `).get(id);
 
-                // Insert metadata
-                const info = this.db.prepare(`
-                    INSERT INTO "${this._cacheTable}" (key, query, result, timestamp, tags)
-                    VALUES (?, ?, ?, ?, ?)
-                `).run(key, query, resultStr, timestamp, tagsStr);
-
-                const rowId = info.lastInsertRowid;
-
-                // Insert vector (rowid must match the cache entry id)
+            let rowId;
+            let createdAt;
+            if (existing) {
+                rowId = existing.row_id;
+                createdAt = existing.created_at;
                 this.db.prepare(`
-                    INSERT INTO "${this._vecTable}" (rowid, embedding)
-                    VALUES (?, ?)
-                `).run(BigInt(rowId), new Float32Array(vector));
-            });
+                    UPDATE "${this._entriesTable}"
+                    SET content = ?, data = ?, tags = ?, updated_at = ?, expires_at = ?
+                    WHERE row_id = ?
+                `).run(content, serializedData, serializedTags, timestamp, expiresAt, rowId);
+                this.db.prepare(`DELETE FROM "${this._vectorsTable}" WHERE rowid = ?`).run(rowId);
+            } else {
+                const result = this.db.prepare(`
+                    INSERT INTO "${this._entriesTable}"
+                        (id, content, data, tags, created_at, updated_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                `).run(id, content, serializedData, serializedTags, timestamp, timestamp, expiresAt);
+                rowId = result.lastInsertRowid;
+                createdAt = timestamp;
+            }
 
-            upsert();
-            return true;
-        } catch (error) {
-            log.error('Error saving to cache:', error);
-            throw error;
-        }
+            this.db.prepare(`
+                INSERT INTO "${this._vectorsTable}" (rowid, embedding)
+                VALUES (?, ?)
+            `).run(BigInt(rowId), vector);
+
+            return {
+                id,
+                content,
+                data: JSON.parse(serializedData),
+                tags: JSON.parse(serializedTags),
+                createdAt,
+                updatedAt: timestamp,
+                expiresAt,
+            };
+        });
+
+        return upsertEntry();
+    }
+
+    async set(query, result, { tags = [] } = {}) {
+        this._assertTags(tags, 'tags');
+        const expiresAt = this.options.ttl === -1
+            ? null
+            : Date.now() + (this.options.ttl * 1000);
+
+        await this.upsert({
+            id: query,
+            content: query,
+            data: result,
+            tags,
+            expiresAt,
+        });
+        return true;
     }
 
     async get(query, { tags = [] } = {}) {
-        try {
-            // Backward compatible tags filter:
-            // - tags: []  -> includeTags
-            // - tags: { in: [], out: [] } -> includeTags/excludeTags
-            const { includeTags, excludeTags } = (() => {
-                if (Array.isArray(tags)) {
-                    return { includeTags: tags, excludeTags: [] };
-                }
-                if (tags && typeof tags === 'object') {
-                    const inTags = Array.isArray(tags.in) ? tags.in : [];
-                    const outTags = Array.isArray(tags.out) ? tags.out : [];
-                    return { includeTags: inTags, excludeTags: outTags };
-                }
-                return { includeTags: [], excludeTags: [] };
-            })();
+        const [match] = await this.search(query, {
+            limit: 1,
+            minSimilarity: this.options.similarityThreshold,
+            tags: this._normalizeCacheTags(tags),
+        });
+        if (!match) return null;
 
-            const vector = await this.embeddingProvider.getEmbeddings(query);
-            const hasTagFilters = includeTags.length > 0 || excludeTags.length > 0;
-            const k = hasTagFilters ? 50 : 1;
+        return {
+            query: match.content,
+            result: match.data,
+            timestamp: match.updatedAt,
+            score: match.distance,
+            tags: match.tags,
+        };
+    }
 
-            // KNN search using sqlite-vec + join with cache table
-            const rows = this.db.prepare(`
-                WITH knn AS (
-                    SELECT rowid, distance
-                    FROM "${this._vecTable}"
-                    WHERE embedding MATCH ?
-                      AND k = ${k}
-                    ORDER BY distance
-                )
-                SELECT knn.rowid, knn.distance, c.query, c.result, c.timestamp, c.tags
-                FROM knn
-                LEFT JOIN "${this._cacheTable}" c ON c.id = knn.rowid
-                ORDER BY knn.distance
-            `).all(new Float32Array(vector));
+    async getById(id) {
+        this._assertConnected();
+        this._assertId(id);
+        this.purgeExpired();
 
-            for (const row of rows) {
-                // Stop if beyond similarity threshold
-                if (row.distance > (1 - this.options.similarityThreshold)) break;
-                if (!row.query) continue; // Skip if no cache entry found
+        const row = this.db.prepare(`
+            SELECT id, content, data, tags, created_at, updated_at, expires_at
+            FROM "${this._entriesTable}"
+            WHERE id = ?
+        `).get(id);
 
-                // Check TTL expiration
-                if (this.options.ttl !== -1) {
-                    const ageInSeconds = (Date.now() - row.timestamp) / 1000;
-                    if (ageInSeconds > this.options.ttl) {
-                        // Expired entry — remove and continue searching
-                        this.db.prepare(`DELETE FROM "${this._cacheTable}" WHERE id = ?`).run(row.rowid);
-                        this.db.prepare(`DELETE FROM "${this._vecTable}" WHERE rowid = ?`).run(row.rowid);
-                        continue;
-                    }
-                }
+        return row ? this._deserializeEntry(row) : null;
+    }
 
-                const entryTags = row.tags ? JSON.parse(row.tags) : [];
+    async search(query, {
+        limit = 10,
+        minSimilarity = -1,
+        tags = {},
+    } = {}) {
+        this._assertConnected();
+        this._assertSearch({ query, limit, minSimilarity, tags });
+        this.purgeExpired();
 
-                // Check tags:
-                // - includeTags: all requested tags must be present (AND logic)
-                // - excludeTags: none of the excluded tags may be present
-                if (includeTags.length > 0 && !includeTags.every(tag => entryTags.includes(tag))) {
-                    continue;
-                }
-                if (excludeTags.length > 0 && excludeTags.some(tag => entryTags.includes(tag))) {
-                    continue;
-                }
+        const { all = [], none = [] } = tags;
+        const hasTagFilters = all.length > 0 || none.length > 0;
+        const entryCount = this.db.prepare(
+            `SELECT COUNT(*) AS count FROM "${this._entriesTable}"`
+        ).get().count;
+        if (entryCount === 0) return [];
 
-                return {
-                    query: row.query,
-                    result: JSON.parse(row.result),
-                    timestamp: row.timestamp,
-                    score: row.distance,
-                    tags: entryTags,
-                };
+        const vector = await this._embed(query);
+        const candidateCount = hasTagFilters ? entryCount : Math.min(limit, entryCount);
+        const rows = this.db.prepare(`
+            WITH matches AS (
+                SELECT rowid, distance
+                FROM "${this._vectorsTable}"
+                WHERE embedding MATCH ?
+                  AND k = ?
+                ORDER BY distance
+            )
+            SELECT
+                e.id,
+                e.content,
+                e.data,
+                e.tags,
+                e.created_at,
+                e.updated_at,
+                e.expires_at,
+                matches.rowid AS row_id,
+                matches.distance
+            FROM matches
+            JOIN "${this._entriesTable}" e ON e.row_id = matches.rowid
+            ORDER BY matches.distance
+        `).all(vector, candidateCount);
+        rows.sort((left, right) => left.distance - right.distance || left.row_id - right.row_id);
+
+        const results = [];
+        for (const row of rows) {
+            const similarity = 1 - row.distance;
+            if (similarity < minSimilarity) break;
+
+            const entry = this._deserializeEntry(row);
+            if (all.some(tag => !entry.tags.includes(tag))) continue;
+            if (none.some(tag => entry.tags.includes(tag))) continue;
+
+            results.push({
+                ...entry,
+                similarity,
+                distance: row.distance,
+            });
+            if (results.length === limit) break;
+        }
+
+        return results;
+    }
+
+    async delete(id) {
+        this._assertConnected();
+        this._assertId(id);
+
+        const row = this.db.prepare(
+            `SELECT row_id FROM "${this._entriesTable}" WHERE id = ?`
+        ).get(id);
+        if (!row) return false;
+
+        this._deleteRows([row.row_id]);
+        return true;
+    }
+
+    async clear() {
+        this._assertConnected();
+        const result = this.db.prepare(
+            `SELECT COUNT(*) AS count FROM "${this._entriesTable}"`
+        ).get();
+
+        const clearEntries = this.db.transaction(() => {
+            this.db.exec(`DELETE FROM "${this._vectorsTable}"`);
+            this.db.exec(`DELETE FROM "${this._entriesTable}"`);
+        });
+        clearEntries();
+        return result.count;
+    }
+
+    purgeExpired() {
+        this._assertConnected();
+        const rows = this.db.prepare(`
+            SELECT row_id
+            FROM "${this._entriesTable}"
+            WHERE expires_at IS NOT NULL AND expires_at <= ?
+        `).all(Date.now());
+        if (rows.length > 0) {
+            this._deleteRows(rows.map(row => row.row_id));
+        }
+        return rows.length;
+    }
+
+    _deleteRows(rowIds) {
+        const deleteRows = this.db.transaction((ids) => {
+            const deleteVector = this.db.prepare(
+                `DELETE FROM "${this._vectorsTable}" WHERE rowid = ?`
+            );
+            const deleteEntry = this.db.prepare(
+                `DELETE FROM "${this._entriesTable}" WHERE row_id = ?`
+            );
+
+            for (const rowId of ids) {
+                deleteVector.run(rowId);
+                deleteEntry.run(rowId);
             }
+        });
+        deleteRows(rowIds);
+    }
 
-            return null;
-        } catch (error) {
-            log.error('Error searching in cache:', error);
-            return null;
+    async _embed(text) {
+        const embedding = await this.embeddingProvider.embed(text);
+        const values = ArrayBuffer.isView(embedding) ? embedding : new Float32Array(embedding);
+
+        if (values.length !== this.embeddingProvider.dimensions) {
+            throw new Error(
+                `Embedding dimension mismatch: expected ${this.embeddingProvider.dimensions}, got ${values.length}`
+            );
+        }
+        for (const value of values) {
+            if (!Number.isFinite(value)) {
+                throw new Error('Embedding values must be finite numbers');
+            }
+        }
+
+        return values instanceof Float32Array ? values : new Float32Array(values);
+    }
+
+    _deserializeEntry(row) {
+        return {
+            id: row.id,
+            content: row.content,
+            data: JSON.parse(row.data),
+            tags: JSON.parse(row.tags),
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            expiresAt: row.expires_at,
+        };
+    }
+
+    _assertConnected() {
+        if (!this.db) {
+            throw new Error('SeekMix is not connected');
         }
     }
 
-    async invalidateOld(maxAgeInSeconds) {
-        try {
-            const cutoffTime = Date.now() - (maxAgeInSeconds * 1000);
-
-            const oldEntries = this.db.prepare(`
-                SELECT id FROM "${this._cacheTable}" WHERE timestamp < ?
-            `).all(cutoffTime);
-
-            if (oldEntries.length > 0) {
-                const purge = this.db.transaction((entries) => {
-                    const deleteCache = this.db.prepare(`DELETE FROM "${this._cacheTable}" WHERE id = ?`);
-                    const deleteVec = this.db.prepare(`DELETE FROM "${this._vecTable}" WHERE rowid = ?`);
-
-                    for (const entry of entries) {
-                        deleteCache.run(entry.id);
-                        deleteVec.run(entry.id);
-                    }
-                });
-
-                purge(oldEntries);
-            }
-
-            return oldEntries.length;
-        } catch (error) {
-            log.error('Error invalidating old cache:', error);
-            throw error;
+    _assertEmbeddingProvider() {
+        const { model, dimensions, embed } = this.embeddingProvider;
+        if (typeof model !== 'string' || model.length === 0) {
+            throw new TypeError('embeddingProvider.model must be a non-empty string');
+        }
+        if (!Number.isInteger(dimensions) || dimensions <= 0) {
+            throw new TypeError('embeddingProvider.dimensions must be a positive integer');
+        }
+        if (typeof embed !== 'function') {
+            throw new TypeError('embeddingProvider.embed must be a function');
         }
     }
 
-    _generateKey(text) {
-        return Buffer.from(text).toString('base64').substring(0, 32);
+    _assertId(id) {
+        if (typeof id !== 'string' || id.length === 0) {
+            throw new TypeError('id must be a non-empty string');
+        }
+    }
+
+    _assertEntry({ id, content, data, tags, expiresAt }) {
+        this._assertId(id);
+        if (typeof content !== 'string' || content.length === 0) {
+            throw new TypeError('content must be a non-empty string');
+        }
+        if (data === undefined || JSON.stringify(data) === undefined) {
+            throw new TypeError('data must be JSON-serializable');
+        }
+        this._assertTags(tags, 'tags');
+        if (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt < 0)) {
+            throw new TypeError('expiresAt must be null or a non-negative Unix timestamp in milliseconds');
+        }
+    }
+
+    _assertSearch({ query, limit, minSimilarity, tags }) {
+        if (typeof query !== 'string' || query.length === 0) {
+            throw new TypeError('query must be a non-empty string');
+        }
+        if (!Number.isInteger(limit) || limit <= 0) {
+            throw new TypeError('limit must be a positive integer');
+        }
+        if (!Number.isFinite(minSimilarity) || minSimilarity < -1 || minSimilarity > 1) {
+            throw new TypeError('minSimilarity must be between -1 and 1');
+        }
+        if (!tags || typeof tags !== 'object' || Array.isArray(tags)) {
+            throw new TypeError('tags must be an object with all and none arrays');
+        }
+        this._assertTags(tags.all || [], 'tags.all');
+        this._assertTags(tags.none || [], 'tags.none');
+    }
+
+    _assertTags(tags, field) {
+        if (!Array.isArray(tags) || tags.some(tag => typeof tag !== 'string' || tag.length === 0)) {
+            throw new TypeError(`${field} must be an array of non-empty strings`);
+        }
+    }
+
+    _normalizeCacheTags(tags) {
+        if (Array.isArray(tags)) {
+            return { all: tags };
+        }
+        if (tags && typeof tags === 'object' && !Array.isArray(tags)) {
+            return {
+                all: tags.in || [],
+                none: tags.out || [],
+            };
+        }
+        throw new TypeError('tags must be an array or an object with in and out arrays');
     }
 }
 

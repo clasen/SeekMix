@@ -11,21 +11,19 @@ async function expensiveApiCall(query) {
     return `Response for: ${query} - ${new Date().toISOString()}`;
 }
 
-// Main function to demonstrate the use of semantic cache
+// Main function to demonstrate a semantic cache policy built on SeekMix
 async function main() {
-    // Create and initialize the semantic cache
-    const cache = new SeekMix({
+    const store = new SeekMix({
         dbPath: 'demo-cache.db',
-        ttl: 60 * 60, // 1 hour TTL
+        ttl: 60 * 60,
+        similarityThreshold: 0.87,
         embeddingProvider: new OpenAIEmbeddingProvider(),
-        dropIndex: true,
-        dropKeys: true
+        reset: true,
     });
 
     try {
-        // Initialize the cache (opens SQLite DB and loads sqlite-vec)
-        await cache.connect();
-        console.log('Semantic cache connected successfully');
+        await store.connect();
+        console.log('Semantic store connected successfully');
 
         // Examples of semantically similar queries
         const queries = [
@@ -40,8 +38,7 @@ async function main() {
         for (const query of queries) {
             console.log(`\nProcessing query: "${query}"`);
 
-            // Try to get from cache
-            const cachedResult = await cache.get(query);
+            const cachedResult = await store.get(query);
 
             if (cachedResult) {
                 console.log(`✅ CACHE HIT - Similarity: ${(1 - cachedResult.score).toFixed(4)}`);
@@ -54,26 +51,17 @@ async function main() {
                 // Make the expensive call
                 const result = await expensiveApiCall(query);
 
-                // Save in cache for future similar queries
-                await cache.set(query, { result });
+                await store.set(query, result);
                 console.log(`Result: ${result}`);
                 console.log('Saved in cache for future similar queries');
             }
         }
-
-        // Invalidation demo
-        // console.log('\n--- Invalidation demonstration ---');
-        // const invalidated = await cache.invalidateOld(30); // Invalidate entries older than 30 seconds
-        // console.log(`Invalidated entries: ${invalidated}`);
-
     } catch (error) {
         console.error('Error in demonstration:', error);
     } finally {
-        // Close the database
-        await cache.disconnect();
+        await store.disconnect();
         console.log('\nConnection closed');
     }
 }
 
-// Run the demonstration
 main().catch(console.error);

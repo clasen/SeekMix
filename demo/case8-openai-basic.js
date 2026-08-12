@@ -2,17 +2,14 @@ import { SeekMix, OpenAIEmbeddingProvider } from '../index.js';
 try { process.loadEnvFile(); } catch (e) { }
 
 
-// Main function to demonstrate the use of semantic cache
-// Create and initialize the semantic cache
-const cache = new SeekMix({
+const store = new SeekMix({
     dbPath: 'demo-cache.db',
     embeddingProvider: new OpenAIEmbeddingProvider(),
-    dropIndex: true,
-    dropKeys: true,
-    similarityThreshold: 0.7
+    reset: true,
+    similarityThreshold: 0.7,
 });
 
-await cache.connect();
+await store.connect();
 
 const tags = ['actor:petercabot'];
 const node = {
@@ -20,10 +17,12 @@ const node = {
     nodeId: 'peter_parents',
 }
 
-await cache.set('como fue el accidente con tus padres?', node, { tags });
-await cache.set('que pasó en uritorco?', node, { tags });
-await cache.set('y tu mamá?', node, { tags });
+await store.set('como fue el accidente con tus padres?', node, { tags });
+await store.set('que pasó en uritorco?', node, { tags });
+await store.set('y tu mamá?', node, { tags });
 
-const r = await cache.get("what about your dog?")
+const result = await store.get('what about your dog?', { tags });
 
-console.log(r);
+console.log(result);
+
+await store.disconnect();

@@ -8,14 +8,14 @@ async function expensiveApiCall(query) {
 }
 
 async function main() {
-    const cache = new SeekMix({
+    const store = new SeekMix({
+        reset: true,
         ttl: 60 * 60,
         similarityThreshold: 0.80,
-        dropIndex: true,
-        embeddingProvider: new MultilingualE5LargeProvider()
+        embeddingProvider: new MultilingualE5LargeProvider(),
     });
 
-    await cache.connect();
+    await store.connect();
     console.log('Connected using intfloat/multilingual-e5-large (via OpenRouter)\n');
 
     const seeds = [
@@ -26,9 +26,9 @@ async function main() {
         { query: 'Comment apprendre le français rapidement', result: 'Pratique quotidienne, immersion culturelle et applications comme Duolingo.' },
     ];
 
-    console.log('--- Seeding cache ---');
+    console.log('--- Seeding store ---');
     for (const { query, result } of seeds) {
-        await cache.set(query, result);
+        await store.set(query, result);
         console.log(`  ✅ Stored: "${query}"`);
     }
 
@@ -44,7 +44,7 @@ async function main() {
     console.log('\n--- Semantic search demo (90+ languages) ---');
     for (const query of queries) {
         console.log(`\nQuery: "${query}"`);
-        const hit = await cache.get(query);
+        const hit = await store.get(query);
 
         if (hit) {
             console.log(`  ✅ CACHE HIT  (similarity: ${(1 - hit.score).toFixed(4)})`);
@@ -53,13 +53,13 @@ async function main() {
         } else {
             console.log('  ❌ CACHE MISS');
             const result = await expensiveApiCall(query);
-            await cache.set(query, result);
+            await store.set(query, result);
             console.log(`  Answer:      ${result}`);
             console.log('  Saved to cache for future similar queries.');
         }
     }
 
-    await cache.disconnect();
+    await store.disconnect();
     console.log('\nDone.');
 }
 

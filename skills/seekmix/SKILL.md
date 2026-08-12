@@ -1,23 +1,25 @@
 ---
 name: seekmix
-description: Semantic caching library for Node.js using vector embeddings and local SQLite storage. Use when adding semantic caching to reduce LLM API calls, caching query results by meaning instead of exact match, building RAG pipelines with cached retrieval/generation steps, or when the user mentions seekmix, semantic cache, or embedding cache.
+description: Local semantic store for Node.js using vector embeddings, SQLite, and sqlite-vec. Use for semantic search, document retrieval, RAG context, recommendations, semantic memory, or semantic caching without external vector infrastructure.
 ---
 
 # SeekMix
 
-Semantic caching library that stores and retrieves results based on the meaning of queries using vector embeddings. Backed by SQLite + sqlite-vec — no external services required.
+SeekMix indexes text, associates it with JSON data, and returns nearby entries using cosine similarity. It offers a concise `set()` / `get()` cache interface plus generic store operations for search-oriented use cases.
 
 ## When to Use
 
-- Cache LLM responses so semantically similar questions return cached results
-- Reduce cost and latency in RAG pipelines (cache retrieval and generation steps)
-- Any scenario where exact-match caching misses near-duplicate queries
+- Local semantic search over application-owned entries
+- Document or chunk retrieval for RAG
+- Semantic memory and recommendation candidates
+- Semantic caching with caller-defined similarity and expiration
+- SQLite-backed vector search without a separate service
 
 ## When NOT to Use
 
-- Exact key-value caching (use Redis or a Map)
-- Non-text data that cannot be meaningfully embedded
-- Scenarios requiring distributed cache across multiple processes (SeekMix uses a local SQLite file)
+- Exact-only key-value caching
+- Distributed vector search across multiple machines
+- Content that cannot be represented meaningfully by the configured embedding model
 
 ## Installation
 
@@ -25,172 +27,168 @@ Semantic caching library that stores and retrieves results based on the meaning 
 npm install seekmix
 ```
 
-No additional infrastructure needed. The default embedding provider (`HuggingfaceProvider`) runs locally — no API keys required. First run downloads the model automatically.
+The default `HuggingfaceProvider` runs locally and downloads its model on first use.
 
-## Exports
-
-```javascript
-import {
-  SeekMix,
-  HuggingfaceProvider,       // Default — local, no API key
-  OpenAIEmbeddingProvider,   // text-embedding-ada-002 (1536d)
-  OpenAIEmbedding3Provider,  // text-embedding-3-small (1536d)
-  OpenAIEmbedding3LargeProvider, // text-embedding-3-large (3072d)
-  BaseEmbeddingProvider      // Extend for custom providers
-} from 'seekmix';
-```
-
-## Configuration Options
-
-| Option | Default | Description |
-|---|---|---|
-| `dbPath` | `'seekmix.db'` | SQLite file path. Use `':memory:'` for in-memory |
-| `ttl` | `-1` | Time-to-live in seconds. `-1` = no expiration |
-| `similarityThreshold` | `0.87` | Cosine similarity threshold (0–1). Higher = stricter matching |
-| `dropIndex` | `false` | Drop and recreate tables on `connect()` |
-| `dropKeys` | `false` | Delete all entries on `connect()` |
-| `embeddingProvider` | `HuggingfaceProvider` | Embedding provider instance |
-
-## Basic Usage
+## Semantic Cache Interface
 
 ```javascript
 import { SeekMix } from 'seekmix';
 
 const cache = new SeekMix({
   similarityThreshold: 0.9,
-  ttl: 3600 // 1 hour
-});
-
-await cache.connect();
-
-// Store a result
-await cache.set('Best restaurants in New York', apiResponse);
-
-// Retrieve — matches semantically similar queries
-const hit = await cache.get('Recommend places to eat in NYC');
-// hit = { query, result, timestamp, score, tags } or null
-
-await cache.disconnect();
-```
-
-## Lifecycle
-
-1. **Instantiate** with config options
-2. **`connect()`** — opens the SQLite database and initializes the embedding model
-3. **`get()` / `set()`** — read and write cache entries
-4. **`disconnect()`** — closes the database
-
-Always call `connect()` before any operations and `disconnect()` when done.
-
-## Common Tasks
-
-### Use with OpenAI Embeddings
-
-```javascript
-import { SeekMix, OpenAIEmbeddingProvider } from 'seekmix';
-
-const cache = new SeekMix({
-  embeddingProvider: new OpenAIEmbeddingProvider({
-    apiKey: process.env.OPENAI_API_KEY
-  })
+  ttl: 3600
 });
 await cache.connect();
+
+await cache.set('Best restaurants in New York', apiResponse, {
+  tags: ['restaurants']
+});
+
+const hit = await cache.get('Where should I eat in New York?', {
+  tags: ['restaurants']
+});
+// hit.result or null
 ```
 
-### Tag-based Filtering
+`set()` and `get()` delegate to the generic store API; they do not implement a separate vector-search path.
 
-Tags classify cache entries. Multiple tags use AND logic on retrieval.
+`get()` returns `{ query, result, timestamp, score, tags }` or `null`. `score` is cosine distance; similarity is `1 - score`.
 
-```javascript
-// Store with tags
-await cache.set('Mejores restaurantes en Madrid', result, { tags: ['lang:es'] });
-await cache.set('Best restaurants in Madrid', result, { tags: ['lang:en'] });
-
-// Retrieve filtering by tag
-const hit = await cache.get('Restaurantes en Madrid', { tags: ['lang:es'] });
-// Only matches entries tagged 'lang:es'
-```
-
-### RAG Pipeline Caching
-
-Use separate cache instances for retrieval and generation steps:
+## Generic Store Interface
 
 ```javascript
-const retrievalCache = new SeekMix({ dbPath: 'rag-retrieval.db' });
-const generationCache = new SeekMix({ dbPath: 'rag-generation.db' });
-await retrievalCache.connect();
-await generationCache.connect();
+const store = new SeekMix();
+await store.connect();
 
-async function queryRAG(question) {
-  const cachedAnswer = await generationCache.get(question);
-  if (cachedAnswer) return cachedAnswer.result;
+await store.upsert({
+  id: 'document:42',
+  content: 'Text used to create the embedding',
+  data: { title: 'Document title' },
+  tags: ['docs', 'published'],
+  expiresAt: null
+});
 
-  let context;
-  const cachedRetrieval = await retrievalCache.get(question);
-  if (cachedRetrieval) {
-    context = cachedRetrieval.result;
-  } else {
-    context = await retrieveDocuments(question);
-    await retrievalCache.set(question, context);
+const matches = await store.search('semantic query', {
+  limit: 5,
+  minSimilarity: 0.8,
+  tags: {
+    all: ['docs'],
+    none: ['draft']
   }
+});
 
-  const answer = await generateAnswer(context, question);
-  await generationCache.set(question, answer);
+await store.disconnect();
+```
+
+The fields have distinct responsibilities:
+
+- `id`: stable application identity
+- `content`: text embedded for semantic search
+- `data`: JSON-serializable application payload
+- `tags`: optional exact filters
+- `expiresAt`: optional Unix timestamp in milliseconds
+
+## Configuration
+
+| Option | Default | Description |
+|---|---|---|
+| `dbPath` | `'seekmix.db'` | SQLite path; use `':memory:'` for tests |
+| `reset` | `false` | Recreate this provider's tables on `connect()` |
+| `ttl` | `-1` | Lifetime in seconds for entries written with `set()` |
+| `similarityThreshold` | `0.87` | Minimum similarity used by `get()` |
+| `embeddingProvider` | `HuggingfaceProvider` | Provider instance |
+
+## Search Results
+
+Each result contains:
+
+```javascript
+{
+  id,
+  content,
+  data,
+  tags,
+  createdAt,
+  updatedAt,
+  expiresAt,
+  similarity,
+  distance
+}
+```
+
+`similarity` is `1 - distance`; higher is better. `minSimilarity` ranges from `-1` to `1` and defaults to `-1`. A search failure rejects; an empty array only means there were no matching entries.
+
+Tag filters use exact strings. All tags in `tags.all` must be present, and any tag in `tags.none` excludes the entry.
+
+## Exact and Lifecycle Operations
+
+```javascript
+const entry = await store.getById('document:42');
+const deleted = await store.delete('document:42');
+const expiredCount = store.purgeExpired();
+const clearedCount = await store.clear();
+```
+
+Expired entries are automatically purged before `get()`, `getById()`, and `search()`.
+
+## Semantic Cache Recipe
+
+```javascript
+async function ask(question) {
+  const cached = await cache.get(question);
+  if (cached) return cached.result;
+
+  const answer = await callYourLLM(question);
+  await cache.set(question, answer);
   return answer;
 }
 ```
 
-### Invalidate Old Entries
+Use `search()` directly when you need multiple matches or a threshold that varies per query.
+
+## Custom Providers
+
+Providers are capability-based:
 
 ```javascript
-const removed = await cache.invalidateOld(3600); // entries older than 1 hour
+const provider = {
+  model: 'custom-model',
+  dimensions: 768,
+  async initialize() {}, // optional
+  async embed(text) {
+    return embedding;
+  }
+};
 ```
 
-### Clear All Entries
+SeekMix validates model identity, dimension count, vector length, and finite vector values.
 
-```javascript
-await cache.dropKeys();
-```
+## Exports
 
-## API Quick Reference
+- `SeekMix`
+- `BaseEmbeddingProvider`
+- `HuggingfaceProvider`
+- `OpenAIEmbeddingProvider`
+- `OpenAIEmbedding3Provider`
+- `OpenAIEmbedding3LargeProvider`
+- `OpenRouterEmbeddingProvider`
+- `QwenEmbeddingProvider`
+- `BgeM3EmbeddingProvider`
+- `MultilingualE5LargeProvider`
+- `OpenAIEmbedding3SmallRouterProvider`
+- `OpenAIEmbedding3LargeRouterProvider`
 
-| Method | Signature | Returns |
-|---|---|---|
-| `connect()` | `async connect()` | `true` |
-| `disconnect()` | `async disconnect()` | `void` |
-| `set()` | `async set(query, result, { tags? })` | `true` |
-| `get()` | `async get(query, { tags? })` | `{ query, result, timestamp, score, tags }` or `null` |
-| `invalidateOld()` | `async invalidateOld(maxAgeInSeconds)` | `number` (count removed) |
-| `dropKeys()` | `async dropKeys()` | `void` |
+## Agent Rules
 
-### `get()` Return Object
-
-| Field | Type | Description |
-|---|---|---|
-| `query` | `string` | The original cached query text |
-| `result` | `any` | The cached result (JSON-serialized internally) |
-| `timestamp` | `number` | Unix timestamp (ms) when entry was stored |
-| `score` | `number` | Cosine distance (lower = more similar). `0` = exact match |
-| `tags` | `string[]` | Tags associated with the entry |
-
-## Agent Usage Rules
-
-- Always call `connect()` before `get()`/`set()` and `disconnect()` when done.
-- Check if `seekmix` is already in `package.json` before installing.
-- Use environment variables for API keys (`OPENAI_API_KEY`). Never hardcode secrets.
-- The default `HuggingfaceProvider` requires no API key but downloads a model on first run (~500 MB). Warn the user about the initial download.
-- Each embedding model creates its own tables — switching models does not invalidate existing caches from other models, but entries are not cross-compatible.
-- `result` is JSON-serialized internally, so any JSON-serializable value works (strings, objects, arrays).
-- Set `similarityThreshold` based on use case: `0.85`–`0.90` for general caching, `0.93`+ for strict matching.
-- For tests or ephemeral usage, use `dbPath: ':memory:'`.
-- The `score` field in `get()` results is cosine distance (not similarity). Similarity = `1 - score`.
-
-## Troubleshooting
-
-- **First `connect()` is slow**: The HuggingFace model is downloading. Subsequent runs use the cached model.
-- **No cache hits despite similar queries**: Lower `similarityThreshold` (e.g., `0.80`). Log `score` values to calibrate.
-- **`better-sqlite3` build errors**: Ensure native build tools are installed (`node-gyp`, Python, C++ compiler).
-- **Stale results**: Set a `ttl` or call `invalidateOld()` periodically.
+- Always connect before operations and disconnect when finished.
+- Prefer `set()` / `get()` for a semantic cache and `upsert()` / `search()` for a semantic collection.
+- Use stable domain IDs; do not derive identity from embedding text unless the text is the actual domain key.
+- Put searchable text in `content`, not only inside `data`.
+- Use `expiresAt` only for entries that are genuinely disposable.
+- Calibrate `minSimilarity` with representative data; do not assume one threshold fits every model.
+- Use `dbPath: ':memory:'` and a deterministic stub provider for unit tests.
+- Never hardcode provider API keys.
+- Warn that the default local model downloads on first use.
 
 ## References
 
