@@ -1,7 +1,7 @@
 {
   "name": "seekmix",
   "description": "🔍 A local semantic search and storage library for Node.js.",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "main": "index.js",
   "scripts": {
     "test": "node --test"
